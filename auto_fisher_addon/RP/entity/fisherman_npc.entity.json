@@ -1,0 +1,35 @@
+{
+  "format_version": "1.10.0",
+  "minecraft:client_entity": {
+    "description": {
+      "identifier": "custom:fisherman_npc",
+      "materials": {
+        "default": "entity_alphatest"
+      },
+      "textures": {
+        "default": "textures/entity/fisherman_npc"
+      },
+      "geometry": {
+        "default": "geometry.fisherman_npc"
+      },
+      "spawn_egg": {
+        "base_color": "#1c3144",
+        "overlay_color": "#f0a500"
+      },
+      "scripts": {
+        "animate": [
+          "controller_fishing"
+        ]
+      },
+      "animations": {
+        "idle": "animation.fisherman_npc.idle",
+        "fishing": "animation.fisherman_npc.fishing",
+        "reel": "animation.fisherman_npc.reel",
+        "controller_fishing": "controller.animation.fisherman_npc.fishing"
+      },
+      "render_controllers": [
+        "controller.render.default"
+      ]
+    }
+  }
+}

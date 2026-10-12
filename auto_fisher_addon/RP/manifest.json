@@ -1,0 +1,22 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Auto-Fisherman NPC (RP)",
+    "description": "Resource Pack for Autonomous Fisherman NPC Addon by kurofy",
+    "uuid": "34800c87-b8c7-4dd0-9cbe-cb3c6ad6c720",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 21, 0]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "5065b683-f1dd-4b55-9bbc-155f951bdb1f",
+      "version": [1, 0, 0]
+    }
+  ],
+  "metadata": {
+    "authors": [
+      "kurofy"
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+## Auto-Fisherman NPC Localization
+pack.name=Auto-Fisherman NPC Addon
+pack.description=Autonomous Fisherman NPC for automated fishing by kurofy
+pack.author=kurofy
+
+## Entities & Items
+entity.custom:fisherman_npc.name=Fisherman NPC
+item.spawn_egg.entity.custom:fisherman_npc.name=Spawn Fisherman NPC
+item.custom:fisherman_spawn_egg.name=Fisherman NPC Spawn Egg
+
+## Interactions & UI
+action.interact.fisherman=Configure Fisherman
+ui.fisherman.title=Fisherman Configuration
+ui.fisherman.status=Status (Active / Paused)
+ui.fisherman.output_mode=Output Mode
+ui.fisherman.output_container=Adjacent Container (Chest/Barrel)
+ui.fisherman.output_drop=Drop as World Entity (Hopper/Stream)
+ui.fisherman.output_player=Deposit to Interacting Player
+ui.fisherman.rod_tier=Rod Enchantment Tier
+ui.fisherman.tier_standard=Standard Rod (Vanilla rates, 15-25s)
+ui.fisherman.tier_lure=Lure III Tier (Fast catch, 8-12s)
+ui.fisherman.tier_luck=Luck of the Sea III Tier (High Treasure)
+ui.fisherman.recall=Recall Entity (Pick up & return spawn egg)

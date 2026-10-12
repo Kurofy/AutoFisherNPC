@@ -1,0 +1,128 @@
+{
+  "format_version": "1.21.0",
+  "minecraft:entity": {
+    "description": {
+      "identifier": "custom:fisherman_npc",
+      "is_spawnable": true,
+      "is_summonable": true,
+      "is_experimental": false,
+      "properties": {
+        "custom:is_fishing": {
+          "type": "bool",
+          "client_sync": true,
+          "default": false
+        }
+      }
+    },
+    "component_groups": {
+      "fishing_active": {
+        "minecraft:variant": {
+          "value": 1
+        }
+      },
+      "fishing_idle": {
+        "minecraft:variant": {
+          "value": 0
+        }
+      }
+    },
+    "components": {
+      "minecraft:type_family": {
+        "family": [
+          "npc",
+          "fisherman",
+          "humanoid",
+          "mob"
+        ]
+      },
+      "minecraft:collision_box": {
+        "width": 0.6,
+        "height": 1.8
+      },
+      "minecraft:physics": {
+        "has_gravity": true,
+        "has_collision": true
+      },
+      "minecraft:pushable": {
+        "is_pushable": false,
+        "is_pushable_by_piston": false
+      },
+      "minecraft:health": {
+        "value": 20,
+        "max": 20
+      },
+      "minecraft:damage_sensor": {
+        "triggers": {
+          "cause": "all",
+          "deals_damage": false
+        }
+      },
+      "minecraft:nameable": {
+        "always_show": false,
+        "allow_name_tag_renaming": true
+      },
+      "minecraft:movement": {
+        "value": 0.0
+      },
+      "minecraft:interact": {
+        "interactions": [
+          {
+            "on_interact": {
+              "filters": {
+                "test": "is_family",
+                "subject": "player",
+                "value": "player"
+              }
+            },
+            "play_sounds": "random.pop",
+            "interact_text": "action.interact.fisherman"
+          }
+        ]
+      }
+    },
+    "events": {
+      "minecraft:entity_spawned": {
+        "add": {
+          "component_groups": [
+            "fishing_idle"
+          ]
+        }
+      },
+      "custom:start_fishing": {
+        "remove": {
+          "component_groups": [
+            "fishing_idle"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "fishing_active"
+          ]
+        },
+        "set_property": {
+          "custom:is_fishing": true
+        }
+      },
+      "custom:stop_fishing": {
+        "remove": {
+          "component_groups": [
+            "fishing_active"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "fishing_idle"
+          ]
+        },
+        "set_property": {
+          "custom:is_fishing": false
+        }
+      },
+      "custom:catch_fish": {
+        "play_sound": {
+          "sound": "random.bowhit"
+        }
+      }
+    }
+  }
+}

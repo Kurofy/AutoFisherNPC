@@ -1,0 +1,102 @@
+{
+  "format_version": "1.8.0",
+  "animations": {
+    "animation.fisherman_npc.idle": {
+      "loop": true,
+      "bones": {
+        "head": {
+          "rotation": [
+            "math.sin(query.anim_time * 60) * 1.5",
+            0,
+            0
+          ]
+        },
+        "right_arm": {
+          "rotation": [
+            0,
+            0,
+            2
+          ]
+        },
+        "left_arm": {
+          "rotation": [
+            0,
+            0,
+            -2
+          ]
+        }
+      }
+    },
+    "animation.fisherman_npc.fishing": {
+      "loop": true,
+      "bones": {
+        "head": {
+          "rotation": [
+            12,
+            0,
+            0
+          ]
+        },
+        "right_arm": {
+          "rotation": [
+            "-50.0 + math.sin(query.anim_time * 90) * 2.0",
+            -15,
+            0
+          ]
+        },
+        "left_arm": {
+          "rotation": [
+            "-45.0 + math.sin(query.anim_time * 90) * 2.0",
+            25,
+            0
+          ]
+        },
+        "fishing_rod": {
+          "rotation": [
+            "math.sin(query.anim_time * 120) * 2.5",
+            0,
+            0
+          ]
+        }
+      }
+    },
+    "animation.fisherman_npc.reel": {
+      "loop": false,
+      "animation_length": 1.5,
+      "bones": {
+        "head": {
+          "rotation": {
+            "0.0": [0, 0, 0],
+            "0.3": [-10, 0, 0],
+            "0.8": [-15, 0, 0],
+            "1.5": [12, 0, 0]
+          }
+        },
+        "right_arm": {
+          "rotation": {
+            "0.0": [-50, -15, 0],
+            "0.25": [-85, -20, 10],
+            "0.8": [-90, -25, 12],
+            "1.5": [-50, -15, 0]
+          }
+        },
+        "left_arm": {
+          "rotation": {
+            "0.0": [-45, 25, 0],
+            "0.25": [-75, 20, -10],
+            "0.8": [-80, 25, -12],
+            "1.5": [-45, 25, 0]
+          }
+        },
+        "fishing_rod": {
+          "rotation": {
+            "0.0": [0, 0, 0],
+            "0.25": [-25, 0, 0],
+            "0.8": [-30, 0, 0],
+            "1.5": [0, 0, 0]
+          }
+        }
+      }
+    }
+  }
+}

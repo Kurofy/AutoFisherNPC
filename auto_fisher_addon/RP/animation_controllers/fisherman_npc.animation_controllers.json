@@ -1,0 +1,32 @@
+{
+  "format_version": "1.10.0",
+  "animation_controllers": {
+    "controller.animation.fisherman_npc.fishing": {
+      "initial_state": "idle",
+      "states": {
+        "idle": {
+          "animations": [
+            "idle"
+          ],
+          "transitions": [
+            {
+              "fishing": "query.property('custom:is_fishing') || query.has_tag('fishing')"
+            }
+          ],
+          "blend_transition": 0.2
+        },
+        "fishing": {
+          "animations": [
+            "fishing"
+          ],
+          "transitions": [
+            {
+              "idle": "!query.property('custom:is_fishing') && !query.has_tag('fishing')"
+            }
+          ],
+          "blend_transition": 0.2
+        }
+      }
+    }
+  }
+}
