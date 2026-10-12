@@ -48,21 +48,35 @@
         "is_pushable_by_piston": false
       },
       "minecraft:health": {
-        "value": 20,
-        "max": 20
+        "value": 1,
+        "max": 1
       },
       "minecraft:damage_sensor": {
-        "triggers": {
-          "cause": "all",
-          "deals_damage": false
-        }
+        "triggers": [
+          {
+            "cause": "entity_attack",
+            "deals_damage": true
+          },
+          {
+            "cause": "all",
+            "deals_damage": false
+          }
+        ]
       },
       "minecraft:nameable": {
-        "always_show": false,
+        "always_show": true,
         "allow_name_tag_renaming": true
       },
       "minecraft:movement": {
         "value": 0.0
+      },
+      "minecraft:equippable": {
+        "slots": [
+          {
+            "slot": "slot.weapon.mainhand",
+            "item": "minecraft:air"
+          }
+        ]
       },
       "minecraft:interact": {
         "interactions": [
@@ -74,7 +88,6 @@
                 "value": "player"
               }
             },
-            "play_sounds": "random.pop",
             "interact_text": "action.interact.fisherman"
           }
         ]

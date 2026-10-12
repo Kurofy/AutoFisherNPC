@@ -1,0 +1,5 @@
+# Ignore changelog and readme files
+CHANGELOG.md
+changelog.md
+README.md
+readme.md

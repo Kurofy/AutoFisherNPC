@@ -1,48 +1,42 @@
-# Auto-Fisherman NPC Addon (Hybrid Built-in Rod & UI Edition)
+# Auto-Fisherman NPC Addon (v1.3.0)
 
 **Author:** kurofy  
 **Target Engine:** Minecraft Bedrock Edition (1.21.x+)  
 **Dependencies:** `@minecraft/server` (1.13.0+), `@minecraft/server-ui` (1.3.0+)
 
-A production-ready Minecraft Bedrock Addon featuring an autonomous Fisherman NPC with survival crafting, modal interaction UI (`@minecraft/server-ui`), rod enchantment tier simulation, direction-aware water detection, and flexible inventory offloading.
-
 ---
 
-## 🛠️ System Architecture & Workflow
+## 🛠️ How It Works
 
-### 1. Survival Crafting & Deployment
+### 1. Crafting & Deployment
 * **Crafting Recipe (Crafting Table):**
   - `1 Armor Stand` (`minecraft:armor_stand`)
-  - `1 Fishing Rod` (`minecraft:fishing_rod`)
   - `1 Raw Cod` (`minecraft:cod`)
   ➔ Yields **`custom:fisherman_spawn_egg`**
-* **Deployment:**
-  - Right-click/tap any block with the spawn egg to place the stationary NPC facing forward.
-  - In Survival mode, 1 spawn egg is consumed. In Creative mode, the egg is preserved.
-  - Can also be summoned via command: `/summon custom:fisherman_npc ~ ~ ~`.
-  - The NPC is immune to push physics (`minecraft:pushable` disabled) and holds an integrated 3D fishing rod model.
+* **Spawning (Water in Front Required):**
+  - Right-click/tap any block with the spawn egg to place the stationary Fisherman NPC.
+  - **Constraint:** There **must be water directly in front** of the placement spot. If there is no water in front, placement is blocked with a sound and message so you don't place it in a dry spot!
+  - The NPC has the floating golden name tag **`§6FISHERMAN`**.
 
-### 2. Interaction & Configuration UI (`@minecraft/server-ui`)
-* Right-click/interact with the NPC with an **empty hand** to open the `ModalFormData` dialog:
-  - **Status Toggle:** `[Active / Paused]` to start or suspend the fishing cycle.
-  - **Output Mode Dropdown:**
-    1. *Adjacent Container (Chest/Barrel)*: Automatically scans north, south, east, west, and down for container blocks (`minecraft:chest`, `minecraft:barrel`, etc.) and inserts items into free slots. Fails over to dropping on the ground if full or absent.
-    2. *Drop as World Entity (for Hopper/Water Streams)*: Drops items directly at the NPC's base.
-    3. *Deposit to Interacting Player*: Automatically deposits caught items into the player's personal inventory if nearby and online.
-  - **Rod Enchantment Simulation Dropdown:**
-    - *Standard Rod*: Vanilla catch rates (85% fish, 10% junk, 5% treasure), 15–25s cycle.
-    - *Lure III Tier*: Fast catch speed (8–12s cycle), standard loot distribution.
-    - *Luck of the Sea III Tier*: High treasure probability (30% treasure, 65% fish, 5% junk), 15–25s cycle.
-  - **Recall Entity Toggle:** Despawns the NPC and returns the `custom:fisherman_spawn_egg` to the player's inventory (or drops at feet if full).
+### 2. Giving the Fishing Rod & Hand Rendering
+* The NPC starts without a rod.
+* **Give Rod:** Hold any standard Minecraft **Fishing Rod** in your hand and right-click the NPC.
+* The NPC takes the rod, holds the actual 3D Minecraft Fishing Rod item in its hand, and begins fishing!
 
-### 3. Directional Water Detection & Execution Loop
-* **Tick Polling:** Evaluated every 20 ticks (1 second) via `system.runInterval`.
-* **Directional Scan:** Checks a 3×3 perimeter 1–2 blocks below eye level in the direction the NPC is facing.
-* **Ambient Feedback:**
-  - If no water is found, the NPC pauses, enters the idle pose, and emits confusion particles (`minecraft:villager_angry`) above its head.
-  - When water is found, the NPC casts the rod, emitting water splash particles and `random.splash` sound effects.
-  - Mid-cycle before a catch, splash particles and sounds simulate fish biting the bobber.
-  - On catch, reeling sounds (`random.bowhit`) and splash wake particles trigger before offloading loot.
+### 3. Fishing & Item Drops
+* **Forward Water Scan:** The NPC detects and casts into the water body located directly in front of it.
+* **Authentic Fishing Cycle:**
+  - Casts the line forward with water splash particles and sound effects.
+  - Spawns periodic water wake bubble particles while waiting (5–10s cycle).
+  - Reeling audio (`random.bowhit`) and splash wake trigger upon catching fish.
+* **Output:** Caught items (fish, junk, treasure) drop **directly below the NPC's feet** like a regular player, allowing easy collection via hoppers or water streams.
+
+### 4. Control Panel UI & Delete Option
+Right-click the Fisherman NPC with **any item or empty hand** (after giving a rod) to open the control panel:
+* **Resume / Pause Fishing:** Instantly toggle fishing on or off.
+* **Take Back Fishing Rod:** Retrieve your fishing rod at any time.
+* **Delete Fisherman NPC:** Despawns the NPC and safely refunds the spawn egg (+ rod) to your inventory.
+* **Survival Punch-to-Break:** Attacking the NPC also cleanly breaks it and drops its items.
 
 ---
 
@@ -87,9 +81,9 @@ auto_fisher_addon/
 
 ---
 
-## 🚀 Installation & Setup
+## 🚀 Installation & Play
 
-1. **One-Click Package:** Double-click [`AutoFishermanNPC.mcaddon`](file:///d:/tes/autofish%20addon/AutoFishermanNPC.mcaddon) to import into Minecraft Bedrock.
+1. **One-Click Package:** Double-click [`AutoFishermanNPC.mcaddon`](file:///d:/tes/autofish%20addon/AutoFishermanNPC.mcaddon) to import both packs into Minecraft Bedrock.
 2. **World Settings:**
    - In **Resource Packs**, activate **Auto-Fisherman NPC (RP)**.
    - In **Behavior Packs**, activate **Auto-Fisherman NPC (BP)**.

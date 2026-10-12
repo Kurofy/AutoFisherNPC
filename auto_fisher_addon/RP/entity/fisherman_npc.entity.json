@@ -4,7 +4,8 @@
     "description": {
       "identifier": "custom:fisherman_npc",
       "materials": {
-        "default": "entity_alphatest"
+        "default": "entity_alphatest",
+        "held_item": "item_in_hand"
       },
       "textures": {
         "default": "textures/entity/fisherman_npc"

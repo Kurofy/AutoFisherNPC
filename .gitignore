@@ -1,0 +1,9 @@
+# Markdown documentation files
+CHANGELOG.md
+changelog.md
+README.md
+readme.md
+
+# Archives
+*.zip
+*.mcaddon
