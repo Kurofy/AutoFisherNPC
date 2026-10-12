@@ -465,7 +465,7 @@ function openFishermanControlPanel(player, npc) {
       `§f• Output: §bDrops directly at feet\n`
     )
     .button(isPaused ? "▶ Resume Fishing (Set ACTIVE)" : "⏸ Pause Fishing (Set PAUSED)")
-    .button(hasRod ? "🎣 Take Back Fishing Rod" : "🎣 Give Fishing Rod (Hold rod in hand)")
+    .button(hasRod ? "🎣 Take Back Fishing Rod" : "🎣 Give Fishing Rod")
     .button("❌ Delete Fisherman NPC")
     .button("Close");
 
@@ -521,7 +521,14 @@ function openFishermanControlPanel(player, npc) {
           player.dimension.playSound("random.pop", npc.location, { volume: 1.0, pitch: 1.0 });
           player.onScreenDisplay?.setActionBar("§e[Fisherman] Took back your Fishing Rod.");
         } else {
-          player.onScreenDisplay?.setActionBar("§eHold a Fishing Rod in your hand and right-click the Fisherman!");
+          // Give rod from inventory or hand directly
+          if (playerHasFishingRod(player)) {
+            giveRodToFisherman(player, npc, false);
+          } else {
+            player.onScreenDisplay?.setActionBar(
+              "§c[Fisherman] You need a Fishing Rod in your inventory or hand!"
+            );
+          }
         }
         return;
       }
@@ -616,6 +623,113 @@ function isHoldingFishingRod(player) {
 }
 
 /**
+ * Give a fishing rod to the fisherman NPC
+ * @param {import("@minecraft/server").Player} player
+ * @param {import("@minecraft/server").Entity} npc
+ * @param {boolean} [fromHandOnly=true]
+ * @returns {boolean}
+ */
+function giveRodToFisherman(player, npc, fromHandOnly = true) {
+  if (!npc.isValid() || !player.isValid()) return false;
+
+  const isCreative = player.getGameMode?.() === "creative";
+  let consumed = isCreative;
+
+  if (!isCreative) {
+    if (fromHandOnly) {
+      consumeHandItem(player);
+      consumed = true;
+    } else {
+      consumed = consumeFishingRodFromPlayer(player);
+    }
+  }
+
+  if (!consumed) return false;
+
+  // Equip Minecraft Fishing Rod on NPC mainhand
+  try {
+    const equip = npc.getComponent("equippable");
+    if (equip) {
+      equip.setEquipment("Mainhand", new ItemStack(CONFIG.ROD_IDENTIFIER, 1));
+    }
+  } catch (e) {
+    console.warn(`[AutoFisher] Failed to set equipment: ${e}`);
+  }
+
+  npc.addTag(CONFIG.TAG_HAS_ROD);
+  player.dimension.playSound("armor.equip_generic", npc.location, { volume: 1.0, pitch: 1.0 });
+  player.dimension.spawnParticle("minecraft:villager_happy", {
+    x: npc.location.x,
+    y: npc.location.y + 1.2,
+    z: npc.location.z,
+  });
+
+  player.onScreenDisplay?.setActionBar("§aYou gave a Fishing Rod to the Fisherman!");
+  return true;
+}
+
+/**
+ * Check if player has a fishing rod in hand or inventory
+ * @param {import("@minecraft/server").Player} player
+ * @returns {boolean}
+ */
+function playerHasFishingRod(player) {
+  if (player.getGameMode?.() === "creative") return true;
+  if (isHoldingFishingRod(player)) return true;
+  try {
+    const inv = player.getComponent("inventory");
+    if (inv && inv.container) {
+      for (let i = 0; i < inv.container.size; i++) {
+        const item = inv.container.getItem(i);
+        if (item && item.typeId === CONFIG.ROD_IDENTIFIER) return true;
+      }
+    }
+  } catch {}
+  return false;
+}
+
+/**
+ * Consume 1 fishing rod from player's inventory or hand
+ * @param {import("@minecraft/server").Player} player
+ * @returns {boolean}
+ */
+function consumeFishingRodFromPlayer(player) {
+  const isCreative = player.getGameMode?.() === "creative";
+  if (isCreative) return true;
+
+  try {
+    const inv = player.getComponent("inventory");
+    if (inv && inv.container) {
+      // First check selected slot
+      const selected = inv.container.getItem(player.selectedSlotIndex);
+      if (selected && selected.typeId === CONFIG.ROD_IDENTIFIER) {
+        if (selected.amount > 1) {
+          selected.amount -= 1;
+          inv.container.setItem(player.selectedSlotIndex, selected);
+        } else {
+          inv.container.setItem(player.selectedSlotIndex, undefined);
+        }
+        return true;
+      }
+      // Then check all slots
+      for (let i = 0; i < inv.container.size; i++) {
+        const item = inv.container.getItem(i);
+        if (item && item.typeId === CONFIG.ROD_IDENTIFIER) {
+          if (item.amount > 1) {
+            item.amount -= 1;
+            inv.container.setItem(i, item);
+          } else {
+            inv.container.setItem(i, undefined);
+          }
+          return true;
+        }
+      }
+    }
+  } catch {}
+  return false;
+}
+
+/**
  * Consume 1 item from player's mainhand in survival mode
  * @param {import("@minecraft/server").Player} player
  */
@@ -704,7 +818,7 @@ world.beforeEvents.itemUseOn.subscribe((event) => {
 
       consumeHandItem(player);
       player.onScreenDisplay?.setActionBar(
-        "§aFisherman placed facing water! Right-click with a Fishing Rod to start."
+        "§aFisherman placed! Sneak + Hold Rod to give rod, or stand to configure."
       );
     } catch (err) {
       console.warn(`[AutoFisher] Failed to spawn fisherman: ${err}`);
@@ -712,7 +826,7 @@ world.beforeEvents.itemUseOn.subscribe((event) => {
   });
 });
 
-// 2. Interaction handling (Give Rod OR Open Control Panel)
+// 2. Interaction handling (Sneak + Rod = Give Rod, Standing = Open Control Panel)
 world.beforeEvents.playerInteractWithEntity.subscribe((event) => {
   const { target: npc, player } = event;
   if (!npc || npc.typeId !== CONFIG.NPC_IDENTIFIER) return;
@@ -723,39 +837,54 @@ world.beforeEvents.playerInteractWithEntity.subscribe((event) => {
     if (!npc.isValid() || !player.isValid()) return;
 
     const hasRod = npc.hasTag(CONFIG.TAG_HAS_ROD);
+    const isSneaking = player.isSneaking;
+    const holdingRod = isHoldingFishingRod(player);
 
-    // Case A: Player holds a Fishing Rod and NPC has no rod yet -> Give Rod!
-    if (!hasRod && isHoldingFishingRod(player)) {
-      consumeHandItem(player);
-
-      // Equip Minecraft Fishing Rod on NPC mainhand
-      try {
-        const equip = npc.getComponent("equippable");
-        if (equip) {
-          equip.setEquipment("Mainhand", new ItemStack(CONFIG.ROD_IDENTIFIER, 1));
-        }
-      } catch (e) {
-        console.warn(`[AutoFisher] Failed to set equipment: ${e}`);
+    // Case A: Sneaking while holding a Fishing Rod -> Give Rod!
+    if (isSneaking && holdingRod) {
+      if (!hasRod) {
+        giveRodToFisherman(player, npc, true);
+      } else {
+        player.onScreenDisplay?.setActionBar(
+          "§e[Fisherman] Already holding a Fishing Rod! Stand up to open Control Panel."
+        );
       }
-
-      npc.addTag(CONFIG.TAG_HAS_ROD);
-      player.dimension.playSound("armor.equip_generic", npc.location, { volume: 1.0, pitch: 1.0 });
-      player.dimension.spawnParticle("minecraft:villager_happy", {
-        x: npc.location.x,
-        y: npc.location.y + 1.2,
-        z: npc.location.z,
-      });
-
-      player.onScreenDisplay?.setActionBar("§aYou gave a Fishing Rod to the Fisherman!");
       return;
     }
 
-    // Case B: Open Control Panel (runs safely even when holding any item)
+    // Case B: Standing normally (or clicking without sneak+rod) -> Open Control Panel!
     openFishermanControlPanel(player, npc);
   });
 });
 
-// 3. Entity Death / Punching (Refunds egg and rod on death)
+// 3. Melee hit handling (Sneak + Hit = break/retrieve, Standing Hit = protected)
+world.afterEvents.entityHitEntity.subscribe((event) => {
+  const { damagingEntity, hitEntity } = event;
+  if (!hitEntity || hitEntity.typeId !== CONFIG.NPC_IDENTIFIER) return;
+  if (!damagingEntity || damagingEntity.typeId !== "minecraft:player") return;
+
+  const player = damagingEntity;
+  const npc = hitEntity;
+
+  if (player.isSneaking) {
+    // Sneak + Hit: In case damage sensor didn't kill it (e.g., creative mode), safely delete and refund
+    system.run(() => {
+      if (npc.isValid()) {
+        deleteFishermanNPC(npc, player);
+      }
+    });
+  } else {
+    // Normal hit while standing: NPC is immune, alert player with tip and clink sound
+    try {
+      player.dimension.playSound("armor.equip_generic", npc.location, { volume: 0.8, pitch: 1.5 });
+    } catch {}
+    player.onScreenDisplay?.setActionBar(
+      "§eFisherman is protected! Sneak + Hit (Jongkok + Pukul) to pick up."
+    );
+  }
+});
+
+// 4. Entity Death (Refunds egg and rod on death via sneak-hit in survival or /kill)
 world.afterEvents.entityDie.subscribe((event) => {
   const { deadEntity } = event;
   if (deadEntity && deadEntity.typeId === CONFIG.NPC_IDENTIFIER) {
@@ -769,7 +898,7 @@ world.afterEvents.entityDie.subscribe((event) => {
   }
 });
 
-// 4. Master tick polling loop (runs every 20 ticks / 1 second)
+// 5. Master tick polling loop (runs every 20 ticks / 1 second)
 system.runInterval(() => {
   const dimensions = ["overworld", "nether", "the_end"];
 
@@ -810,4 +939,4 @@ system.runInterval(() => {
   }
 }, CONFIG.POLL_INTERVAL_TICKS);
 
-console.info("[AutoFisher] Auto-Fisherman NPC v1.3.1 initialized successfully.");
+console.info("[AutoFisher] Auto-Fisherman NPC v1.3.2 initialized successfully.");

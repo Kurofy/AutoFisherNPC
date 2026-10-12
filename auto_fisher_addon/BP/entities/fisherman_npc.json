@@ -55,7 +55,23 @@
         "triggers": [
           {
             "cause": "entity_attack",
-            "deals_damage": true
+            "deals_damage": true,
+            "on_damage": {
+              "filters": {
+                "all_of": [
+                  {
+                    "test": "is_family",
+                    "subject": "other",
+                    "value": "player"
+                  },
+                  {
+                    "test": "is_sneaking",
+                    "subject": "other",
+                    "value": true
+                  }
+                ]
+              }
+            }
           },
           {
             "cause": "all",
@@ -81,14 +97,45 @@
       "minecraft:interact": {
         "interactions": [
           {
+            "interact_text": "action.interact.give_rod",
+            "on_interact": {
+              "filters": {
+                "all_of": [
+                  {
+                    "test": "is_family",
+                    "subject": "player",
+                    "value": "player"
+                  },
+                  {
+                    "test": "is_sneaking",
+                    "subject": "player",
+                    "value": true
+                  },
+                  {
+                    "test": "has_equipment",
+                    "subject": "player",
+                    "domain": "hand",
+                    "value": "minecraft:fishing_rod"
+                  },
+                  {
+                    "test": "has_tag",
+                    "subject": "self",
+                    "operator": "!=",
+                    "value": "has_rod"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "interact_text": "action.interact.fisherman",
             "on_interact": {
               "filters": {
                 "test": "is_family",
                 "subject": "player",
                 "value": "player"
               }
-            },
-            "interact_text": "action.interact.fisherman"
+            }
           }
         ]
       }

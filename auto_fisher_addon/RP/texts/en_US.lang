@@ -10,7 +10,8 @@ item.custom:fisherman_spawn_egg.name=Fisherman NPC Spawn Egg
 
 ## Interactions & UI
 action.interact.fisherman=Configure Fisherman
-ui.fisherman.title=Fisherman Configuration
+action.interact.give_rod=Give Fishing Rod
+ui.fisherman.title=Fisherman Control Panel
 ui.fisherman.status=Status (Active / Paused)
 ui.fisherman.output_mode=Output Mode
 ui.fisherman.output_container=Adjacent Container (Chest/Barrel)
