@@ -539,83 +539,92 @@ function spawnFishingLineTrail(dimension, p1, p2, steps = 6) {
 }
 
 // -------------------------------------------------------------
-// CONTAINER INSERTION & GUARANTEED DROP FALLBACK
+// VANILLA /LOOT CATCH GENERATION & CHEST OFFLOADING
 // -------------------------------------------------------------
 
 /**
- * Deliver caught item to adjacent container (chest/barrel/hopper) with guaranteed ground spawn fallback
+ * Attempt to offload spawned item entities near targetPos into adjacent containers (chests/barrels/hoppers)
+ * If containers are full or none are found, items remain intact on the ground.
  * @param {import("@minecraft/server").Entity} npc
- * @param {ItemStack} itemStack
+ * @param {{x: number, y: number, z: number}} targetPos
  */
-function deliverCaughtItem(npc, itemStack) {
-  if (!npc.isValid() || !itemStack || itemStack.amount <= 0) return;
-
+function tryOffloadItemsToContainer(npc, targetPos) {
+  if (!npc.isValid()) return;
   const dimension = npc.dimension;
   const loc = npc.location;
 
-  let dirX = 0;
-  let dirZ = 1;
-  try {
-    const rot = npc.getRotation();
-    const rad = (rot.y * Math.PI) / 180;
-    dirX = -Math.sin(rad);
-    dirZ = Math.cos(rad);
-  } catch {}
+  const blockX = Math.floor(loc.x);
+  const blockY = Math.floor(loc.y);
+  const blockZ = Math.floor(loc.z);
 
-  const spawnLocation = {
-    x: loc.x + dirX * 0.4,
-    y: loc.y + 0.25,
-    z: loc.z + dirZ * 0.4,
-  };
+  // Search adjacent blocks around NPC for containers (under, cardinal sides, diagonal, top)
+  const offsets = [
+    { dx: 0, dy: -1, dz: 0 }, // under NPC (chest/hopper)
+    { dx: 1, dy: 0, dz: 0 },
+    { dx: -1, dy: 0, dz: 0 },
+    { dx: 0, dy: 0, dz: 1 },
+    { dx: 0, dy: 0, dz: -1 },
+    { dx: 1, dy: 0, dz: 0 },
+    { dx: -1, dy: 0, dz: 0 },
+    { dx: 0, dy: -1, dz: 1 },
+    { dx: 0, dy: -1, dz: -1 },
+    { dx: 0, dy: 1, dz: 0 },
+  ];
 
-  let remainingItem = itemStack;
+  const containers = [];
+  for (const off of offsets) {
+    try {
+      const block = dimension.getBlock({
+        x: blockX + off.dx,
+        y: blockY + off.dy,
+        z: blockZ + off.dz,
+      });
+      if (!block) continue;
 
-  try {
-    const blockX = Math.floor(loc.x);
-    const blockY = Math.floor(loc.y);
-    const blockZ = Math.floor(loc.z);
-
-    // Search adjacent blocks around NPC for containers (under, cardinal sides, diagonal, top)
-    const offsets = [
-      { dx: 0, dy: -1, dz: 0 }, // under NPC (chest/hopper)
-      { dx: 1, dy: 0, dz: 0 },
-      { dx: -1, dy: 0, dz: 0 },
-      { dx: 0, dy: 0, dz: 1 },
-      { dx: 0, dy: 0, dz: -1 },
-      { dx: 1, dy: -1, dz: 0 },
-      { dx: -1, dy: -1, dz: 0 },
-      { dx: 0, dy: -1, dz: 1 },
-      { dx: 0, dy: -1, dz: -1 },
-      { dx: 0, dy: 1, dz: 0 },
-    ];
-
-    for (const off of offsets) {
-      if (!remainingItem || remainingItem.amount <= 0) break;
-      try {
-        const block = dimension.getBlock({
-          x: blockX + off.dx,
-          y: blockY + off.dy,
-          z: blockZ + off.dz,
-        });
-        if (!block) continue;
-
-        const invComp = block.getComponent("inventory");
-        if (invComp && invComp.container) {
-          remainingItem = invComp.container.addItem(remainingItem);
-        }
-      } catch {}
-    }
-  } catch (err) {
-    console.warn(`[AutoFisher] Container delivery check failed: ${err}`);
+      const invComp = block.getComponent("inventory");
+      if (invComp && invComp.container) {
+        containers.push(invComp.container);
+      }
+    } catch {}
   }
 
-  // Fallback: spawn leftover item directly in front of the NPC
-  if (remainingItem && remainingItem.amount > 0) {
-    try {
-      dimension.spawnItem(remainingItem, spawnLocation);
-    } catch (spawnErr) {
-      console.warn(`[AutoFisher] Fallback item spawn failed: ${spawnErr}`);
+  // If no container found, leave item entities intact on the floor
+  if (containers.length === 0) return;
+
+  // Query spawned item entities within a 1.5-block radius of the spawn position
+  try {
+    const itemEntities = dimension.getEntities({
+      location: targetPos,
+      maxDistance: 1.5,
+      type: "minecraft:item",
+    });
+
+    for (const itemEntity of itemEntities) {
+      if (!itemEntity.isValid()) continue;
+      const itemComp = itemEntity.getComponent("item") || itemEntity.getComponent("minecraft:item");
+      if (!itemComp || !itemComp.itemStack) continue;
+
+      let remainingStack = itemComp.itemStack.clone();
+      const initialAmount = remainingStack.amount;
+
+      for (const container of containers) {
+        if (!remainingStack || remainingStack.amount <= 0) break;
+        try {
+          remainingStack = container.addItem(remainingStack);
+        } catch {}
+      }
+
+      if (!remainingStack || remainingStack.amount <= 0) {
+        // Completely inserted into container, despawn item entity
+        itemEntity.remove();
+      } else if (remainingStack.amount < initialAmount) {
+        // Partially inserted, update entity item stack
+        itemComp.itemStack = remainingStack;
+      }
+      // If container is full, remaining item entity stays intact on the floor
     }
+  } catch (err) {
+    console.warn(`[AutoFisher] Container offloading failed: ${err}`);
   }
 }
 
@@ -651,7 +660,7 @@ function startCasting(entity, session, waterPos, lureLevel) {
 }
 
 /**
- * Complete the reel-in: reward catch, insert into chest or drop at feet, award 1-6 XP
+ * Complete the reel-in: trigger vanilla /loot command, offload to chest if present, award 1-6 XP
  * @param {import("@minecraft/server").Entity} entity
  * @param {SessionState} session
  * @param {number} luckLevel
@@ -671,11 +680,54 @@ function completeReel(entity, session, luckLevel) {
     dimension.spawnParticle("minecraft:water_splash_particle", bobberPos);
   } catch {}
 
-  // 3. Roll loot with Luck of the Sea and deliver to container or fallback to ground
-  const loot = rollFishingLoot(luckLevel);
-  deliverCaughtItem(entity, loot);
+  // 3. Compute forward spawn position in front of the NPC
+  let dir = { x: 0, z: 1 };
+  try {
+    const rot = entity.getRotation();
+    const rad = (rot.y * Math.PI) / 180;
+    dir.x = -Math.sin(rad);
+    dir.z = Math.cos(rad);
+  } catch {
+    try {
+      const view = entity.getViewDirection();
+      const mag = Math.hypot(view.x, view.z);
+      if (mag > 0.001) {
+        dir.x = view.x / mag;
+        dir.z = view.z / mag;
+      }
+    } catch {}
+  }
 
-  // 4. Stored XP System: Roll 1 to 6 XP per successful catch
+  const spawnPos = {
+    x: entity.location.x + dir.x * 1.2,
+    y: entity.location.y + 0.2,
+    z: entity.location.z + dir.z * 1.2,
+  };
+
+  const spawnX = spawnPos.x.toFixed(2);
+  const spawnY = spawnPos.y.toFixed(2);
+  const spawnZ = spawnPos.z.toFixed(2);
+
+  // 4. Trigger vanilla fishing loot table complete with random damage and valid enchantments
+  try {
+    dimension.runCommand(`loot spawn ${spawnX} ${spawnY} ${spawnZ} loot "gameplay/fishing/fishing"`);
+  } catch (cmdErr) {
+    console.warn(`[AutoFisher] /loot command failed, falling back to direct drop: ${cmdErr}`);
+    try {
+      const fallbackLoot = rollFishingLoot(luckLevel);
+      dimension.spawnItem(fallbackLoot, spawnPos);
+    } catch {}
+  }
+
+  // 5. Integration with Chest Offloading (if adjacent chest/barrel/hopper is present)
+  tryOffloadItemsToContainer(entity, spawnPos);
+  system.runTimeout(() => {
+    if (entity.isValid()) {
+      tryOffloadItemsToContainer(entity, spawnPos);
+    }
+  }, 1);
+
+  // 6. Stored XP System: Roll 1 to 6 XP per successful catch
   const xpRoll = Math.floor(Math.random() * 6) + 1;
   addStoredXp(entity, xpRoll);
 
@@ -942,7 +994,7 @@ function openFishermanControlPanel(player, npc) {
   }
 
   const form = new ActionFormData()
-    .title("§6FISHERMAN Control Panel")
+    .title("§6FISHERMAN Control Panel (v1.6.0)")
     .body(
       `§7Manage this Fisherman NPC:\n\n` +
       `§f• Status: ${statusText}\n` +
