@@ -1,4 +1,4 @@
-# Auto-Fisherman NPC Addon (v1.3.0)
+# Auto-Fisherman NPC Addon (v1.4.0)
 
 **Author:** kurofy  
 **Target Engine:** Minecraft Bedrock Edition (1.21.x+)  
@@ -13,30 +13,37 @@
   - `1 Armor Stand` (`minecraft:armor_stand`)
   - `1 Raw Cod` (`minecraft:cod`)
   ➔ Yields **`custom:fisherman_spawn_egg`**
-* **Spawning (Water in Front Required):**
+* **Spawning (Water Detection):**
   - Right-click/tap any block with the spawn egg to place the stationary Fisherman NPC.
-  - **Constraint:** There **must be water directly in front** of the placement spot. If there is no water in front, placement is blocked with a sound and message so you don't place it in a dry spot!
+  - **Constraint:** Checks for water in front or within 2 blocks of the placement spot.
   - The NPC has the floating golden name tag **`§6FISHERMAN`**.
 
-### 2. Giving the Fishing Rod & Hand Rendering
-* The NPC starts without a rod.
-* **Give Rod:** Hold any standard Minecraft **Fishing Rod** in your hand and right-click the NPC.
-* The NPC takes the rod, holds the actual 3D Minecraft Fishing Rod item in its hand, and begins fishing!
+### 2. Dual Giving System & 3D Held Rod (Attachables)
+* When spawned without a rod, the NPC is **`🔴 INACTIVE`** and displays a relaxed idle animation with empty hands.
+* **Option 1 (From Inventory Button)**: Open the Control Panel UI by clicking/tapping the NPC with any item or empty hand. Click **"🎣 Give Fishing Rod (From Inventory)"**; it automatically takes 1 rod directly from your inventory.
+* **Option 2 (Drop Rod on NPC)**: Simply drop (throw) a Fishing Rod item near or on the NPC. The NPC automatically detects it, picks it up, equips it, and becomes **`🟢 ACTIVE`**!
+* **3D Held Rod**: The equipped Minecraft Fishing Rod renders directly in the NPC's hand using Bedrock attachables (`rightItem`).
 
-### 3. Fishing & Item Drops
-* **Forward Water Scan:** The NPC detects and casts into the water body located directly in front of it.
+### 3. Experience (EXP) Collection System
+* Every time the NPC catches a fish, it collects **1 to 6 EXP points**.
+* Players can harvest accumulated EXP at any time via the **"✨ Collect Stored EXP"** button in the Control Panel UI.
+* Stored EXP is safely refunded to the player if the NPC is deleted or recalled.
+
+### 4. Fishing & Item Drops
+* **Forward & Surrounding Water Scan:** The NPC detects nearby water and casts into it.
 * **Authentic Fishing Cycle:**
   - Casts the line forward with water splash particles and sound effects.
   - Spawns periodic water wake bubble particles while waiting (5–10s cycle).
   - Reeling audio (`random.bowhit`) and splash wake trigger upon catching fish.
 * **Output:** Caught items (fish, junk, treasure) drop **directly below the NPC's feet** like a regular player, allowing easy collection via hoppers or water streams.
 
-### 4. Control Panel UI & Delete Option
-Right-click the Fisherman NPC with **any item or empty hand** (after giving a rod) to open the control panel:
+### 5. Control Panel UI (v1.4.0)
+Right-click or tap the Fisherman NPC with **any item or empty hand** to open the control panel:
 * **Resume / Pause Fishing:** Instantly toggle fishing on or off.
-* **Take Back Fishing Rod:** Retrieve your fishing rod at any time.
-* **Delete Fisherman NPC:** Despawns the NPC and safely refunds the spawn egg (+ rod) to your inventory.
-* **Survival Punch-to-Break:** Attacking the NPC also cleanly breaks it and drops its items.
+* **Give / Take Back Fishing Rod:** Equip from inventory or retrieve your fishing rod at any time.
+* **Collect Stored EXP:** Harvest accumulated experience points.
+* **Delete Fisherman NPC:** Despawns the NPC and safely refunds the spawn egg (+ rod + stored EXP) to your inventory.
+* **Survival Punch-to-Break:** Sneak-attacking the NPC also cleanly breaks it and drops its items.
 
 ---
 

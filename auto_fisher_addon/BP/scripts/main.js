@@ -4,21 +4,25 @@ import { ActionFormData } from "@minecraft/server-ui";
 /**
  * Production-ready Auto-Fisherman NPC Script
  * Minecraft Bedrock Edition (1.21.x+)
+ * Version: 1.4.0
  * Author: kurofy
  * 
- * Key Features:
- * - Placement requires water directly in front of the NPC
- * - Real Minecraft Fishing Rod held in hand (given by player)
- * - Name tag fixed to "§6FISHERMAN"
- * - Direction-aware forward water detection for casting
- * - Regular player item drops (drops directly below/at NPC base)
- * - Accessible control panel even when holding an item in hand
- * - Persistent On/Off status toggle via tags
- * - Delete NPC button and punch-to-break behavior
- * - Authentic splash sounds, bubble wake particles, and vanilla fishing loot
+ * Key Features in v1.4.0:
+ * - Version 1.4.0 in Control Panel UI and Localization
+ * - Universal Configure UI accessible when holding ANY item or rod
+ * - Dual Rod Giving System:
+ *   1) UI button takes rod directly from player inventory (no need to hold)
+ *   2) Players can drop a fishing rod onto the NPC and it automatically equips it
+ * - Stored EXP System: NPC collects 1-6 EXP per catch; players collect stored EXP via UI button
+ * - Inactive state enforcement: NPC is completely inactive with idle animation when it has no rod
+ * - Real 3D Fishing Rod equipped and held in hand via attachables
+ * - Direction-aware water detection with 360-degree fallback search and auto-alignment
+ * - Authentic splash sounds, bubble wake particles, and vanilla fishing loot dropped at feet
  */
 
 const CONFIG = {
+  VERSION: "1.4.0",
+  PANEL_TITLE: "§6FISHERMAN Control Panel (v1.4.0)",
   POLL_INTERVAL_TICKS: 20, // 1 second
   NPC_IDENTIFIER: "custom:fisherman_npc",
   SPAWN_EGG_IDENTIFIER: "custom:fisherman_spawn_egg",
@@ -30,6 +34,7 @@ const CONFIG = {
   PROPERTY_IS_FISHING: "custom:is_fishing",
   MIN_WAIT_TICKS: 100, // 5 seconds
   MAX_WAIT_TICKS: 200, // 10 seconds
+  EXP_OBJECTIVE_NAME: "fisher_exp",
 };
 
 // Vanilla Fishing Loot distribution
@@ -88,6 +93,77 @@ const LOOT_CATEGORIES = [
 /** @type {Map<string, SessionState>} */
 const activeSessions = new Map();
 
+// -------------------------------------------------------------
+// EXP SCOREBOARD MANAGEMENT
+// -------------------------------------------------------------
+
+/**
+ * Retrieve or create scoreboard objective for storing Fisherman EXP
+ * @returns {import("@minecraft/server").ScoreboardObjective | null}
+ */
+function getExpObjective() {
+  try {
+    let obj = world.scoreboard.getObjective(CONFIG.EXP_OBJECTIVE_NAME);
+    if (!obj) {
+      obj = world.scoreboard.addObjective(CONFIG.EXP_OBJECTIVE_NAME, "Fisher EXP");
+    }
+    return obj;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get stored EXP for a fisherman NPC
+ * @param {import("@minecraft/server").Entity} npc
+ * @returns {number}
+ */
+function getStoredExp(npc) {
+  try {
+    const obj = getExpObjective();
+    if (!obj) return 0;
+    return obj.getScore(npc) ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Add EXP to a fisherman NPC
+ * @param {import("@minecraft/server").Entity} npc
+ * @param {number} amount
+ * @returns {number}
+ */
+function addStoredExp(npc, amount) {
+  try {
+    const obj = getExpObjective();
+    if (!obj) return 0;
+    const current = obj.getScore(npc) ?? 0;
+    const next = current + amount;
+    obj.setScore(npc, next);
+    return next;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Clear stored EXP for a fisherman NPC
+ * @param {import("@minecraft/server").Entity} npc
+ */
+function clearStoredExp(npc) {
+  try {
+    const obj = getExpObjective();
+    if (obj) {
+      obj.setScore(npc, 0);
+    }
+  } catch {}
+}
+
+// -------------------------------------------------------------
+// WATER DETECTION HELPERS
+// -------------------------------------------------------------
+
 /**
  * Check if a block position contains liquid water
  * @param {import("@minecraft/server").Dimension} dimension
@@ -122,12 +198,12 @@ function hasWaterInFront(dimension, spawnPos, forwardDir) {
   const perpX = -dirZ;
   const perpZ = dirX;
 
-  for (const dist of [1, 2]) {
-    for (const side of [-0.6, 0, 0.6]) {
+  for (const dist of [1, 2, 3]) {
+    for (const side of [-1, -0.5, 0, 0.5, 1]) {
       const targetX = Math.floor(spawnPos.x + dirX * dist + perpX * side);
       const targetZ = Math.floor(spawnPos.z + dirZ * dist + perpZ * side);
 
-      for (let dy = -2; dy <= 0; dy++) {
+      for (let dy = -2; dy <= 1; dy++) {
         const checkPos = {
           x: targetX,
           y: Math.floor(spawnPos.y) + dy,
@@ -139,11 +215,28 @@ function hasWaterInFront(dimension, spawnPos, forwardDir) {
       }
     }
   }
+
+  // 360-degree fallback check around spawn position within 2 blocks
+  for (let dx = -2; dx <= 2; dx++) {
+    for (let dz = -2; dz <= 2; dz++) {
+      for (let dy = -2; dy <= 0; dy++) {
+        const checkPos = {
+          x: Math.floor(spawnPos.x) + dx,
+          y: Math.floor(spawnPos.y) + dy,
+          z: Math.floor(spawnPos.z) + dz,
+        };
+        if (isWaterBlock(dimension, checkPos)) {
+          return true;
+        }
+      }
+    }
+  }
+
   return false;
 }
 
 /**
- * Find water block positioned directly in front of the NPC
+ * Find water block positioned in front of or near the NPC
  * @param {import("@minecraft/server").Entity} entity
  * @returns {{x: number, y: number, z: number} | null}
  */
@@ -153,14 +246,22 @@ function findWaterInFront(entity) {
 
   let dirX = 0;
   let dirZ = 1;
+
   try {
-    const view = entity.getViewDirection();
-    const mag = Math.hypot(view.x, view.z);
-    if (mag > 0.001) {
-      dirX = view.x / mag;
-      dirZ = view.z / mag;
-    }
-  } catch {}
+    const rot = entity.getRotation();
+    const rad = (rot.y * Math.PI) / 180;
+    dirX = -Math.sin(rad);
+    dirZ = Math.cos(rad);
+  } catch {
+    try {
+      const view = entity.getViewDirection();
+      const mag = Math.hypot(view.x, view.z);
+      if (mag > 0.001) {
+        dirX = view.x / mag;
+        dirZ = view.z / mag;
+      }
+    } catch {}
+  }
 
   const perpX = -dirZ;
   const perpZ = dirX;
@@ -168,13 +269,13 @@ function findWaterInFront(entity) {
   let closestWater = null;
   let minDistanceSq = Infinity;
 
-  // Search forward cone (1 to 2.5 blocks in front, up to 1 block to sides, 0 to 2 blocks down)
-  for (const dist of [1, 1.5, 2, 2.5]) {
-    for (const side of [-1, -0.5, 0, 0.5, 1]) {
+  // 1. Search forward cone (1 to 3 blocks in front, up to 1.5 blocks to sides, -2 to 1 dy)
+  for (const dist of [1, 1.5, 2, 2.5, 3]) {
+    for (const side of [-1.2, -0.6, 0, 0.6, 1.2]) {
       const targetX = Math.floor(loc.x + dirX * dist + perpX * side);
       const targetZ = Math.floor(loc.z + dirZ * dist + perpZ * side);
 
-      for (let dy = -2; dy <= 0; dy++) {
+      for (let dy = -2; dy <= 1; dy++) {
         const checkPos = {
           x: targetX,
           y: Math.floor(loc.y) + dy,
@@ -196,8 +297,49 @@ function findWaterInFront(entity) {
     }
   }
 
+  // 2. If no water in forward cone, scan surrounding 3-block radius as fallback
+  if (!closestWater) {
+    for (let dx = -3; dx <= 3; dx++) {
+      for (let dz = -3; dz <= 3; dz++) {
+        for (let dy = -2; dy <= 1; dy++) {
+          const checkPos = {
+            x: Math.floor(loc.x) + dx,
+            y: Math.floor(loc.y) + dy,
+            z: Math.floor(loc.z) + dz,
+          };
+
+          if (isWaterBlock(dimension, checkPos)) {
+            const dX = checkPos.x + 0.5 - loc.x;
+            const dY = checkPos.y + 0.5 - loc.y;
+            const dZ = checkPos.z + 0.5 - loc.z;
+            const distSq = dX * dX + dY * dY + dZ * dZ;
+
+            if (distSq < minDistanceSq) {
+              minDistanceSq = distSq;
+              closestWater = checkPos;
+            }
+          }
+        }
+      }
+    }
+
+    // Orient NPC towards found water
+    if (closestWater) {
+      try {
+        const dX = closestWater.x + 0.5 - loc.x;
+        const dZ = closestWater.z + 0.5 - loc.z;
+        const yaw = Math.atan2(-dX, dZ) * (180 / Math.PI);
+        entity.setRotation({ x: 0, y: yaw });
+      } catch {}
+    }
+  }
+
   return closestWater;
 }
+
+// -------------------------------------------------------------
+// LOOT & EQUIPMENT HELPERS
+// -------------------------------------------------------------
 
 /**
  * Generate a random fishing loot item stack
@@ -237,13 +379,45 @@ function rollFishingLoot() {
 }
 
 /**
- * Set entity client-side fishing state
+ * Equip a Fishing Rod in the NPC's mainhand socket
+ * @param {import("@minecraft/server").Entity} npc
+ */
+function equipRodOnNpc(npc) {
+  try {
+    const equip = npc.getComponent("equippable");
+    if (equip) {
+      equip.setEquipment("Mainhand", new ItemStack(CONFIG.ROD_IDENTIFIER, 1));
+    }
+  } catch (err) {
+    console.warn(`[AutoFisher] Failed to set mainhand equipment: ${err}`);
+  }
+}
+
+/**
+ * Unequip the Fishing Rod from the NPC's mainhand
+ * @param {import("@minecraft/server").Entity} npc
+ */
+function unequipRodFromNpc(npc) {
+  try {
+    const equip = npc.getComponent("equippable");
+    if (equip) {
+      equip.setEquipment("Mainhand", undefined);
+    }
+  } catch {}
+}
+
+/**
+ * Set entity client-side fishing state and animation triggers
  * @param {import("@minecraft/server").Entity} entity
  * @param {boolean} isFishing
  */
 function setEntityFishingState(entity, isFishing) {
   try {
     entity.setProperty(CONFIG.PROPERTY_IS_FISHING, isFishing);
+  } catch {}
+
+  try {
+    entity.triggerEvent(isFishing ? "custom:start_fishing" : "custom:stop_fishing");
   } catch {}
 
   try {
@@ -254,6 +428,10 @@ function setEntityFishingState(entity, isFishing) {
     }
   } catch {}
 }
+
+// -------------------------------------------------------------
+// FISHING STATE MACHINE
+// -------------------------------------------------------------
 
 /**
  * Start casting fishing line into target water
@@ -285,7 +463,7 @@ function startCasting(entity, session) {
 }
 
 /**
- * Complete reel-in and drop caught loot directly below NPC
+ * Complete reel-in, drop caught loot at feet, and collect EXP
  * @param {import("@minecraft/server").Entity} entity
  * @param {SessionState} session
  */
@@ -311,7 +489,7 @@ function completeReel(entity, session) {
     entity.triggerEvent("custom:catch_fish");
   } catch {}
 
-  // Drop loot item directly below the NPC / at feet (like regular player)
+  // 1. Drop loot item directly below the NPC / at feet (like regular player)
   const loot = rollFishingLoot();
   const dropPos = {
     x: entity.location.x,
@@ -325,10 +503,83 @@ function completeReel(entity, session) {
     console.warn(`[AutoFisher] Failed to spawn caught item: ${err}`);
   }
 
+  // 2. Collect 1 to 6 EXP points into NPC stored EXP
+  const expGained = Math.floor(Math.random() * 6) + 1;
+  addStoredExp(entity, expGained);
+
+  try {
+    dimension.spawnParticle("minecraft:villager_happy", {
+      x: entity.location.x,
+      y: entity.location.y + 1.6,
+      z: entity.location.z,
+    });
+  } catch {}
+
   // Cooldown before next cast (20 ticks / 1 second)
   session.state = "COOLDOWN";
   session.cooldownTicksRemaining = 20;
 }
+
+// -------------------------------------------------------------
+// DROPPED ROD CHECK (OPTION 2: DROP ROD ON NPC)
+// -------------------------------------------------------------
+
+/**
+ * Scan for dropped fishing rod items directly near the NPC (Option 2)
+ * @param {import("@minecraft/server").Entity} npc
+ */
+function checkForDroppedRod(npc) {
+  if (!npc.isValid() || npc.hasTag(CONFIG.TAG_HAS_ROD)) return;
+
+  try {
+    const nearbyItems = npc.dimension.getEntities({
+      location: npc.location,
+      maxDistance: 2.0,
+      type: "minecraft:item",
+    });
+
+    for (const itemEntity of nearbyItems) {
+      if (!itemEntity.isValid()) continue;
+      const itemComp = itemEntity.getComponent("item");
+      if (!itemComp) continue;
+
+      const stack = itemComp.itemStack;
+      if (stack && stack.typeId === CONFIG.ROD_IDENTIFIER) {
+        // Consume 1 rod from dropped stack
+        if (stack.amount > 1) {
+          stack.amount -= 1;
+          itemComp.itemStack = stack;
+        } else {
+          itemEntity.remove();
+        }
+
+        equipRodOnNpc(npc);
+        npc.addTag(CONFIG.TAG_HAS_ROD);
+
+        const loc = npc.location;
+        const dim = npc.dimension;
+        dim.playSound("armor.equip_generic", loc, { volume: 1.0, pitch: 1.0 });
+        dim.playSound("random.orb", loc, { volume: 0.8, pitch: 1.2 });
+        dim.spawnParticle("minecraft:villager_happy", {
+          x: loc.x,
+          y: loc.y + 1.2,
+          z: loc.z,
+        });
+
+        // Notify nearby players
+        const nearbyPlayers = dim.getPlayers({ location: loc, maxDistance: 8.0 });
+        for (const p of nearbyPlayers) {
+          p.onScreenDisplay?.setActionBar("§a[Fisherman] Picked up dropped Fishing Rod! Now ACTIVE.");
+        }
+        break;
+      }
+    }
+  } catch {}
+}
+
+// -------------------------------------------------------------
+// MASTER UPDATE TICK FOR INDIVIDUAL NPC
+// -------------------------------------------------------------
 
 /**
  * Main evaluation tick for an individual Fisherman NPC
@@ -357,9 +608,18 @@ function updateFisherman(entity) {
     activeSessions.set(entity.id, session);
   }
 
-  // 1. Check if NPC has a Fishing Rod
-  const hasRod = entity.hasTag(CONFIG.TAG_HAS_ROD);
+  // Check if NPC has a Fishing Rod
+  let hasRod = entity.hasTag(CONFIG.TAG_HAS_ROD);
+
+  // If no rod yet, check if a player dropped a fishing rod nearby (Option 2)
   if (!hasRod) {
+    checkForDroppedRod(entity);
+    hasRod = entity.hasTag(CONFIG.TAG_HAS_ROD);
+  }
+
+  // INACTIVE ENFORCEMENT: When there is NO rod, NPC must be completely inactive!
+  if (!hasRod) {
+    unequipRodFromNpc(entity);
     if (session.state !== "IDLE") {
       setEntityFishingState(entity, false);
       session.state = "IDLE";
@@ -368,7 +628,18 @@ function updateFisherman(entity) {
     return;
   }
 
-  // 2. Check if NPC is paused via Status toggle
+  // Ensure held item is visually equipped in mainhand
+  try {
+    const equip = entity.getComponent("equippable");
+    if (equip) {
+      const held = equip.getEquipment("Mainhand");
+      if (!held || held.typeId !== CONFIG.ROD_IDENTIFIER) {
+        equip.setEquipment("Mainhand", new ItemStack(CONFIG.ROD_IDENTIFIER, 1));
+      }
+    }
+  } catch {}
+
+  // Check if NPC is manually paused via toggle
   const isPaused = entity.hasTag(CONFIG.TAG_PAUSED);
   if (isPaused) {
     if (session.state !== "IDLE") {
@@ -379,7 +650,7 @@ function updateFisherman(entity) {
     return;
   }
 
-  // 3. Scan for water directly in front of the NPC
+  // Scan for water in front or surrounding
   const waterPos = findWaterInFront(entity);
   if (!waterPos) {
     if (session.state !== "IDLE") {
@@ -387,7 +658,6 @@ function updateFisherman(entity) {
       session.state = "IDLE";
       session.targetWater = null;
     }
-    // Spawn ambient confusion particles when active but no water found in front
     try {
       entity.dimension.spawnParticle("minecraft:villager_angry", {
         x: entity.location.x,
@@ -400,7 +670,7 @@ function updateFisherman(entity) {
 
   session.targetWater = waterPos;
 
-  // 4. State Machine execution
+  // State Machine execution
   switch (session.state) {
     case "IDLE":
       startCasting(entity, session);
@@ -417,7 +687,6 @@ function updateFisherman(entity) {
           z: session.targetWater.z + 0.5,
         };
 
-        // Mid-cycle / bite alert near completion
         if (!session.biteNotified && session.waitTicksRemaining <= 30) {
           session.biteNotified = true;
           try {
@@ -445,6 +714,10 @@ function updateFisherman(entity) {
   }
 }
 
+// -------------------------------------------------------------
+// CONTROL PANEL UI (v1.4.0)
+// -------------------------------------------------------------
+
 /**
  * Open Control Panel Dialog for player (safely works even while holding any item)
  * @param {import("@minecraft/server").Player} player
@@ -455,17 +728,32 @@ function openFishermanControlPanel(player, npc) {
 
   const isPaused = npc.hasTag(CONFIG.TAG_PAUSED);
   const hasRod = npc.hasTag(CONFIG.TAG_HAS_ROD);
+  const storedExp = getStoredExp(npc);
+
+  let statusText = "§c🔴 INACTIVE (No Fishing Rod)";
+  if (hasRod) {
+    statusText = isPaused ? "§6⏸ PAUSED (Manually Paused)" : "§a🟢 ACTIVE (Fishing)";
+  }
 
   const form = new ActionFormData()
-    .title("§6FISHERMAN Control Panel")
+    .title(CONFIG.PANEL_TITLE)
     .body(
       `§7Manage this Fisherman NPC:\n\n` +
-      `§f• Status: ${isPaused ? "§c🔴 PAUSED" : "§a🟢 ACTIVE"}\n` +
-      `§f• Fishing Rod: ${hasRod ? "§aEquipped (Holding Rod)" : "§eNone (Give rod to fish)"}\n` +
-      `§f• Output: §bDrops directly at feet\n`
+      `§f• Status: ${statusText}\n` +
+      `§f• Fishing Rod: ${hasRod ? "§aEquipped (Holding Rod)" : "§cNone (Give rod to activate)"}\n` +
+      `§f• Stored EXP: §a${storedExp} XP\n` +
+      `§f• Output: §bDrops directly at feet\n\n` +
+      `§7💡 Tip: Drop a Fishing Rod near the NPC to equip it automatically!`
     )
-    .button(isPaused ? "▶ Resume Fishing (Set ACTIVE)" : "⏸ Pause Fishing (Set PAUSED)")
-    .button(hasRod ? "🎣 Take Back Fishing Rod" : "🎣 Give Fishing Rod")
+    .button(
+      !hasRod
+        ? "⏸ Inactive (Give Rod First)"
+        : isPaused
+        ? "▶ Resume Fishing (Set ACTIVE)"
+        : "⏸ Pause Fishing (Set PAUSED)"
+    )
+    .button(hasRod ? "🎣 Take Back Fishing Rod" : "🎣 Give Fishing Rod (From Inventory)")
+    .button(storedExp > 0 ? `✨ Collect Stored EXP (${storedExp} XP)` : "✨ Collect Stored EXP (0 XP)")
     .button("❌ Delete Fisherman NPC")
     .button("Close");
 
@@ -474,9 +762,8 @@ function openFishermanControlPanel(player, npc) {
 
     form.show(player).then((response) => {
       if (response.canceled) {
-        // If canceled because player was busy (holding/using item), retry in 4 ticks
-        if (response.cancelationReason === "UserBusy" && attempt < 3) {
-          system.runTimeout(() => tryShow(attempt + 1), 4);
+        if (response.cancelationReason === "UserBusy" && attempt < 10) {
+          system.runTimeout(() => tryShow(attempt + 1), 3);
         }
         return;
       }
@@ -486,6 +773,14 @@ function openFishermanControlPanel(player, npc) {
 
       // Button 0: Toggle Status (Active / Paused)
       if (action === 0) {
+        if (!hasRod) {
+          player.dimension.playSound("note.bass", player.location, { volume: 1.0, pitch: 0.8 });
+          player.onScreenDisplay?.setActionBar(
+            "§c[Fisherman] Cannot activate: Equip or drop a Fishing Rod first!"
+          );
+          return;
+        }
+
         if (isPaused) {
           npc.removeTag(CONFIG.TAG_PAUSED);
           player.onScreenDisplay?.setActionBar("§a[Fisherman] Status set to ACTIVE!");
@@ -501,40 +796,70 @@ function openFishermanControlPanel(player, npc) {
         return;
       }
 
-      // Button 1: Take Back or Give Rod
+      // Button 1: Give / Take Rod (Option 1: Grab from player inventory)
       if (action === 1) {
         if (hasRod) {
           // Take back rod
           npc.removeTag(CONFIG.TAG_HAS_ROD);
           setEntityFishingState(npc, false);
+          uneunequipRod(npc);
+
           const session = activeSessions.get(npc.id);
           if (session) session.state = "IDLE";
 
-          // Unequip from NPC
-          try {
-            const equip = npc.getComponent("equippable");
-            if (equip) equip.setEquipment("Mainhand", undefined);
-          } catch {}
-
-          // Return rod to player
           giveOrDropItem(player, new ItemStack(CONFIG.ROD_IDENTIFIER, 1));
           player.dimension.playSound("random.pop", npc.location, { volume: 1.0, pitch: 1.0 });
-          player.onScreenDisplay?.setActionBar("§e[Fisherman] Took back your Fishing Rod.");
+          player.onScreenDisplay?.setActionBar("§e[Fisherman] Took back your Fishing Rod. NPC is now INACTIVE.");
         } else {
-          // Give rod from inventory or hand directly
+          // Option 1: Give rod directly from player inventory (does not require holding it)
           if (playerHasFishingRod(player)) {
-            giveRodToFisherman(player, npc, false);
-          } else {
+            consumeFishingRodFromPlayer(player);
+            equipRodOnNpc(npc);
+            npc.addTag(CONFIG.TAG_HAS_ROD);
+
+            player.dimension.playSound("armor.equip_generic", npc.location, { volume: 1.0, pitch: 1.0 });
+            player.dimension.spawnParticle("minecraft:villager_happy", {
+              x: npc.location.x,
+              y: npc.location.y + 1.2,
+              z: npc.location.z,
+            });
             player.onScreenDisplay?.setActionBar(
-              "§c[Fisherman] You need a Fishing Rod in your inventory or hand!"
+              "§a[Fisherman] Equipped Fishing Rod from your inventory! Now ACTIVE."
+            );
+          } else {
+            player.dimension.playSound("note.bass", player.location, { volume: 1.0, pitch: 0.8 });
+            player.onScreenDisplay?.setActionBar(
+              "§c[Fisherman] No Fishing Rod found in your inventory or hand!"
             );
           }
         }
         return;
       }
 
-      // Button 2: Delete Fisherman NPC
+      // Button 2: Collect Stored EXP
       if (action === 2) {
+        const currentExp = getStoredExp(npc);
+        if (currentExp > 0) {
+          player.addExperience(currentExp);
+          clearStoredExp(npc);
+          player.dimension.playSound("random.orb", player.location, { volume: 1.0, pitch: 1.2 });
+          player.dimension.spawnParticle("minecraft:villager_happy", {
+            x: player.location.x,
+            y: player.location.y + 1.2,
+            z: player.location.z,
+          });
+          player.onScreenDisplay?.setActionBar(`§a[Fisherman] Collected ${currentExp} EXP!`);
+        } else {
+          player.dimension.playSound("note.bass", player.location, { volume: 0.8, pitch: 0.8 });
+          player.onScreenDisplay?.setActionBar(
+            "§e[Fisherman] No EXP collected yet! (NPC gains 1-6 XP per catch)"
+          );
+        }
+        return;
+      }
+
+      // Button 3: Delete Fisherman NPC
+      if (action === 3) {
         deleteFishermanNPC(npc, player);
         return;
       }
@@ -545,7 +870,15 @@ function openFishermanControlPanel(player, npc) {
 }
 
 /**
- * Safely delete fisherman NPC and return spawn egg + rod
+ * Unequip rod helper wrapper
+ * @param {import("@minecraft/server").Entity} npc
+ */
+function uneunequipRod(npc) {
+  unequipRodFromNpc(npc);
+}
+
+/**
+ * Safely delete fisherman NPC and return spawn egg, rod, and collected EXP
  * @param {import("@minecraft/server").Entity} npc
  * @param {import("@minecraft/server").Player} [player]
  */
@@ -555,8 +888,10 @@ function deleteFishermanNPC(npc, player) {
   const loc = npc.location;
   const dimension = npc.dimension;
   const hadRod = npc.hasTag(CONFIG.TAG_HAS_ROD);
+  const storedExp = getStoredExp(npc);
 
   activeSessions.delete(npc.id);
+  clearStoredExp(npc);
   npc.remove();
 
   dimension.playSound("random.pop", loc, { volume: 1.0, pitch: 1.2 });
@@ -571,6 +906,9 @@ function deleteFishermanNPC(npc, player) {
     giveOrDropItem(player, eggItem);
     if (hadRod) {
       giveOrDropItem(player, new ItemStack(CONFIG.ROD_IDENTIFIER, 1));
+    }
+    if (storedExp > 0) {
+      player.addExperience(storedExp);
     }
     player.onScreenDisplay?.setActionBar("§c[Fisherman] Fisherman deleted & refunded to inventory.");
   } else {
@@ -600,11 +938,13 @@ function giveOrDropItem(player, item) {
 }
 
 /**
- * Check if player hand is holding a fishing rod
+ * Check if player has a fishing rod in hand or inventory
  * @param {import("@minecraft/server").Player} player
  * @returns {boolean}
  */
-function isHoldingFishingRod(player) {
+function playerHasFishingRod(player) {
+  if (player.getGameMode?.() === "creative") return true;
+
   try {
     const equip = player.getComponent("equippable");
     if (equip) {
@@ -612,70 +952,7 @@ function isHoldingFishingRod(player) {
       if (item && item.typeId === CONFIG.ROD_IDENTIFIER) return true;
     }
   } catch {}
-  try {
-    const inv = player.getComponent("inventory");
-    if (inv && inv.container) {
-      const item = inv.container.getItem(player.selectedSlotIndex);
-      if (item && item.typeId === CONFIG.ROD_IDENTIFIER) return true;
-    }
-  } catch {}
-  return false;
-}
 
-/**
- * Give a fishing rod to the fisherman NPC
- * @param {import("@minecraft/server").Player} player
- * @param {import("@minecraft/server").Entity} npc
- * @param {boolean} [fromHandOnly=true]
- * @returns {boolean}
- */
-function giveRodToFisherman(player, npc, fromHandOnly = true) {
-  if (!npc.isValid() || !player.isValid()) return false;
-
-  const isCreative = player.getGameMode?.() === "creative";
-  let consumed = isCreative;
-
-  if (!isCreative) {
-    if (fromHandOnly) {
-      consumeHandItem(player);
-      consumed = true;
-    } else {
-      consumed = consumeFishingRodFromPlayer(player);
-    }
-  }
-
-  if (!consumed) return false;
-
-  // Equip Minecraft Fishing Rod on NPC mainhand
-  try {
-    const equip = npc.getComponent("equippable");
-    if (equip) {
-      equip.setEquipment("Mainhand", new ItemStack(CONFIG.ROD_IDENTIFIER, 1));
-    }
-  } catch (e) {
-    console.warn(`[AutoFisher] Failed to set equipment: ${e}`);
-  }
-
-  npc.addTag(CONFIG.TAG_HAS_ROD);
-  player.dimension.playSound("armor.equip_generic", npc.location, { volume: 1.0, pitch: 1.0 });
-  player.dimension.spawnParticle("minecraft:villager_happy", {
-    x: npc.location.x,
-    y: npc.location.y + 1.2,
-    z: npc.location.z,
-  });
-
-  player.onScreenDisplay?.setActionBar("§aYou gave a Fishing Rod to the Fisherman!");
-  return true;
-}
-
-/**
- * Check if player has a fishing rod in hand or inventory
- * @param {import("@minecraft/server").Player} player
- * @returns {boolean}
- */
-function playerHasFishingRod(player) {
-  if (player.getGameMode?.() === "creative") return true;
-  if (isHoldingFishingRod(player)) return true;
   try {
     const inv = player.getComponent("inventory");
     if (inv && inv.container) {
@@ -685,6 +962,7 @@ function playerHasFishingRod(player) {
       }
     }
   } catch {}
+
   return false;
 }
 
@@ -700,7 +978,7 @@ function consumeFishingRodFromPlayer(player) {
   try {
     const inv = player.getComponent("inventory");
     if (inv && inv.container) {
-      // First check selected slot
+      // 1. Check selected slot first
       const selected = inv.container.getItem(player.selectedSlotIndex);
       if (selected && selected.typeId === CONFIG.ROD_IDENTIFIER) {
         if (selected.amount > 1) {
@@ -711,7 +989,8 @@ function consumeFishingRodFromPlayer(player) {
         }
         return true;
       }
-      // Then check all slots
+
+      // 2. Check all inventory slots
       for (let i = 0; i < inv.container.size; i++) {
         const item = inv.container.getItem(i);
         if (item && item.typeId === CONFIG.ROD_IDENTIFIER) {
@@ -726,6 +1005,7 @@ function consumeFishingRodFromPlayer(player) {
       }
     }
   } catch {}
+
   return false;
 }
 
@@ -784,19 +1064,19 @@ world.beforeEvents.itemUseOn.subscribe((event) => {
       z: block.z + offset.z,
     };
 
-    // Calculate facing direction away from the player
+    // Calculate facing direction away from player
     const pLoc = player.location;
     const dx = spawnPos.x - pLoc.x;
     const dz = spawnPos.z - pLoc.z;
     const mag = Math.hypot(dx, dz) || 1;
     const forwardDir = { x: dx / mag, z: dz / mag };
 
-    // REQUIREMENT: Must have water directly in front of the placement spot!
+    // Water verification
     const waterDetected = hasWaterInFront(dimension, spawnPos, forwardDir);
     if (!waterDetected) {
       dimension.playSound("note.bass", player.location, { volume: 1.0, pitch: 0.8 });
       player.onScreenDisplay?.setActionBar(
-        "§cCannot place: There must be water directly in front of the Fisherman!"
+        "§cCannot place: There must be water nearby or directly in front of the Fisherman!"
       );
       return;
     }
@@ -805,7 +1085,7 @@ world.beforeEvents.itemUseOn.subscribe((event) => {
       const npc = dimension.spawnEntity(CONFIG.NPC_IDENTIFIER, spawnPos);
       npc.nameTag = CONFIG.NPC_NAME_TAG;
 
-      // Orient facing the water in front
+      // Orient facing the water
       const yaw = Math.atan2(-forwardDir.x, forwardDir.z) * (180 / Math.PI);
       npc.setRotation({ x: 0, y: yaw });
 
@@ -818,7 +1098,7 @@ world.beforeEvents.itemUseOn.subscribe((event) => {
 
       consumeHandItem(player);
       player.onScreenDisplay?.setActionBar(
-        "§aFisherman placed! Sneak + Hold Rod to give rod, or stand to configure."
+        "§aFisherman placed! Configure via UI or drop a Fishing Rod on the NPC."
       );
     } catch (err) {
       console.warn(`[AutoFisher] Failed to spawn fisherman: ${err}`);
@@ -826,35 +1106,18 @@ world.beforeEvents.itemUseOn.subscribe((event) => {
   });
 });
 
-// 2. Interaction handling (Sneak + Rod = Give Rod, Standing = Open Control Panel)
+// 2. Interaction handling (Opens Control Panel even when holding any item or rod)
 world.beforeEvents.playerInteractWithEntity.subscribe((event) => {
   const { target: npc, player } = event;
   if (!npc || npc.typeId !== CONFIG.NPC_IDENTIFIER) return;
 
   event.cancel = true;
 
-  system.run(() => {
+  // Run on next tick to resolve interact tick and prevent UserBusy state
+  system.runTimeout(() => {
     if (!npc.isValid() || !player.isValid()) return;
-
-    const hasRod = npc.hasTag(CONFIG.TAG_HAS_ROD);
-    const isSneaking = player.isSneaking;
-    const holdingRod = isHoldingFishingRod(player);
-
-    // Case A: Sneaking while holding a Fishing Rod -> Give Rod!
-    if (isSneaking && holdingRod) {
-      if (!hasRod) {
-        giveRodToFisherman(player, npc, true);
-      } else {
-        player.onScreenDisplay?.setActionBar(
-          "§e[Fisherman] Already holding a Fishing Rod! Stand up to open Control Panel."
-        );
-      }
-      return;
-    }
-
-    // Case B: Standing normally (or clicking without sneak+rod) -> Open Control Panel!
     openFishermanControlPanel(player, npc);
-  });
+  }, 1);
 });
 
 // 3. Melee hit handling (Sneak + Hit = break/retrieve, Standing Hit = protected)
@@ -867,14 +1130,12 @@ world.afterEvents.entityHitEntity.subscribe((event) => {
   const npc = hitEntity;
 
   if (player.isSneaking) {
-    // Sneak + Hit: In case damage sensor didn't kill it (e.g., creative mode), safely delete and refund
     system.run(() => {
       if (npc.isValid()) {
         deleteFishermanNPC(npc, player);
       }
     });
   } else {
-    // Normal hit while standing: NPC is immune, alert player with tip and clink sound
     try {
       player.dimension.playSound("armor.equip_generic", npc.location, { volume: 0.8, pitch: 1.5 });
     } catch {}
@@ -884,7 +1145,7 @@ world.afterEvents.entityHitEntity.subscribe((event) => {
   }
 });
 
-// 4. Entity Death (Refunds egg and rod on death via sneak-hit in survival or /kill)
+// 4. Entity Death (Refunds egg and rod on death)
 world.afterEvents.entityDie.subscribe((event) => {
   const { deadEntity } = event;
   if (deadEntity && deadEntity.typeId === CONFIG.NPC_IDENTIFIER) {
@@ -895,6 +1156,7 @@ world.afterEvents.entityDie.subscribe((event) => {
     if (deadEntity.hasTag(CONFIG.TAG_HAS_ROD)) {
       dim.spawnItem(new ItemStack(CONFIG.ROD_IDENTIFIER, 1), loc);
     }
+    clearStoredExp(deadEntity);
   }
 });
 
@@ -939,4 +1201,4 @@ system.runInterval(() => {
   }
 }, CONFIG.POLL_INTERVAL_TICKS);
 
-console.info("[AutoFisher] Auto-Fisherman NPC v1.3.2 initialized successfully.");
+console.info(`[AutoFisher] Auto-Fisherman NPC v${CONFIG.VERSION} initialized successfully.`);

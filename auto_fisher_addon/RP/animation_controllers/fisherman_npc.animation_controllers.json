@@ -10,7 +10,7 @@
           ],
           "transitions": [
             {
-              "fishing": "query.property('custom:is_fishing') || query.has_tag('fishing')"
+              "fishing": "query.property('custom:is_fishing') || query.variant == 1"
             }
           ],
           "blend_transition": 0.2
@@ -21,7 +21,7 @@
           ],
           "transitions": [
             {
-              "idle": "!query.property('custom:is_fishing') && !query.has_tag('fishing')"
+              "idle": "!query.property('custom:is_fishing') && query.variant == 0"
             }
           ],
           "blend_transition": 0.2

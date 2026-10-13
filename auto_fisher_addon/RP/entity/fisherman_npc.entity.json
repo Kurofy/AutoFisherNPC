@@ -17,6 +17,7 @@
         "base_color": "#1c3144",
         "overlay_color": "#f0a500"
       },
+      "enable_attachables": true,
       "scripts": {
         "animate": [
           "controller_fishing"

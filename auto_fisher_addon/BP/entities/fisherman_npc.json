@@ -86,53 +86,16 @@
       "minecraft:movement": {
         "value": 0.0
       },
-      "minecraft:equippable": {
-        "slots": [
-          {
-            "slot": "slot.weapon.mainhand",
-            "item": "minecraft:air"
-          }
-        ]
-      },
+      "minecraft:equippable": {},
       "minecraft:interact": {
         "interactions": [
           {
-            "interact_text": "action.interact.give_rod",
-            "on_interact": {
-              "filters": {
-                "all_of": [
-                  {
-                    "test": "is_family",
-                    "subject": "player",
-                    "value": "player"
-                  },
-                  {
-                    "test": "is_sneaking",
-                    "subject": "player",
-                    "value": true
-                  },
-                  {
-                    "test": "has_equipment",
-                    "subject": "player",
-                    "domain": "hand",
-                    "value": "minecraft:fishing_rod"
-                  },
-                  {
-                    "test": "has_tag",
-                    "subject": "self",
-                    "operator": "!=",
-                    "value": "has_rod"
-                  }
-                ]
-              }
-            }
-          },
-          {
             "interact_text": "action.interact.fisherman",
+            "use_item": false,
             "on_interact": {
               "filters": {
                 "test": "is_family",
-                "subject": "player",
+                "subject": "other",
                 "value": "player"
               }
             }

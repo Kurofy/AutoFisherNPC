@@ -11,8 +11,13 @@ item.custom:fisherman_spawn_egg.name=Fisherman NPC Spawn Egg
 ## Interactions & UI
 action.interact.fisherman=Configure Fisherman
 action.interact.give_rod=Give Fishing Rod
-ui.fisherman.title=Fisherman Control Panel
-ui.fisherman.status=Status (Active / Paused)
+ui.fisherman.title=Fisherman Control Panel (v1.4.0)
+ui.fisherman.status=Status
+ui.fisherman.stored_exp=Stored Experience
+ui.fisherman.collect_exp=Collect Stored EXP
+ui.fisherman.give_rod_inv=Give Fishing Rod (From Inventory)
+ui.fisherman.take_rod=Take Back Fishing Rod
+ui.fisherman.drop_rod_hint=Drop a Fishing Rod near NPC to give it!
 ui.fisherman.output_mode=Output Mode
 ui.fisherman.output_container=Adjacent Container (Chest/Barrel)
 ui.fisherman.output_drop=Drop as World Entity (Hopper/Stream)
