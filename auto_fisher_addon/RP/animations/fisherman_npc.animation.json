@@ -13,9 +13,9 @@
         },
         "right_arm": {
           "rotation": [
+            -20,
             0,
-            0,
-            2
+            0
           ]
         },
         "left_arm": {

@@ -7,41 +7,7 @@
         "idle": {
           "animations": [
             "idle"
-          ],
-          "transitions": [
-            {
-              "fishing": "query.property('custom:is_fishing')"
-            }
-          ],
-          "blend_transition": 0.2
-        },
-        "fishing": {
-          "animations": [
-            "fishing"
-          ],
-          "transitions": [
-            {
-              "reel": "query.property('custom:is_reeling')"
-            },
-            {
-              "idle": "!query.property('custom:is_fishing')"
-            }
-          ],
-          "blend_transition": 0.2
-        },
-        "reel": {
-          "animations": [
-            "reel"
-          ],
-          "transitions": [
-            {
-              "fishing": "!query.property('custom:is_reeling') && query.property('custom:is_fishing')"
-            },
-            {
-              "idle": "!query.property('custom:is_fishing')"
-            }
-          ],
-          "blend_transition": 0.15
+          ]
         }
       }
     }

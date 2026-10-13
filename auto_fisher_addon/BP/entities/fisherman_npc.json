@@ -96,6 +96,9 @@
       "minecraft:movement": {
         "value": 0.0
       },
+      "minecraft:equipment": {
+        "table": "loot_tables/equipment/fisherman_gear.json"
+      },
       "minecraft:equippable": {},
       "minecraft:interact": {
         "interactions": [
