@@ -19,11 +19,15 @@
       "enable_attachables": true,
       "scripts": {
         "animate": [
-          "idle"
+          "humanoid_base_pose",
+          "look_at_target",
+          "holding_item"
         ]
       },
       "animations": {
-        "idle": "animation.fisherman_npc.idle"
+        "humanoid_base_pose": "animation.humanoid.base_pose",
+        "look_at_target": "animation.humanoid.look_at_target.default",
+        "holding_item": "animation.humanoid.holding"
       },
       "render_controllers": [
         "controller.render.default"

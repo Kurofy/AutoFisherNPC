@@ -189,13 +189,26 @@ function ensureInfiniteDurability(rodItem, equippable) {
 
 /**
  * Calculate dynamic cycle wait ticks based on Lure enchantment level
- * Base: 15–25s. Each level of Lure reduces by ~5s down to 5–10s.
+ * - Baseline (No Lure): 6–10 seconds (120–200 ticks)
+ * - Lure I: 5–8 seconds (100–160 ticks)
+ * - Lure II: 4–6 seconds (80–120 ticks)
+ * - Lure III+: 2–4 seconds (40–80 ticks)
  * @param {number} lureLevel
  * @returns {number}
  */
 function calculateWaitTicks(lureLevel) {
-  const minSec = Math.max(5, 15 - lureLevel * 5);
-  const maxSec = Math.max(minSec + 2, 25 - lureLevel * 5);
+  let minSec = 6;
+  let maxSec = 10;
+  if (lureLevel === 1) {
+    minSec = 5;
+    maxSec = 8;
+  } else if (lureLevel === 2) {
+    minSec = 4;
+    maxSec = 6;
+  } else if (lureLevel >= 3) {
+    minSec = 2;
+    maxSec = 4;
+  }
   const chosenSeconds = Math.random() * (maxSec - minSec) + minSec;
   return Math.floor(chosenSeconds * 20);
 }
@@ -432,7 +445,7 @@ function findWaterInFront(entity) {
  */
 function equipRodOnNpc(npc, rodItem) {
   try {
-    const equip = npc.getComponent("equippable");
+    const equip = npc.getComponent("minecraft:equippable") || npc.getComponent("equippable");
     if (equip) {
       const itemToEquip = rodItem ?? new ItemStack(CONFIG.ROD_IDENTIFIER, 1);
       equip.setEquipment(EquipmentSlot.Mainhand, itemToEquip);
@@ -451,7 +464,7 @@ function equipRodOnNpc(npc, rodItem) {
 function unequipRodFromNpc(npc) {
   let existingRod;
   try {
-    const equip = npc.getComponent("equippable");
+    const equip = npc.getComponent("minecraft:equippable") || npc.getComponent("equippable");
     if (equip) {
       existingRod = equip.getEquipment(EquipmentSlot.Mainhand);
       equip.setEquipment(EquipmentSlot.Mainhand, undefined);
@@ -459,6 +472,151 @@ function unequipRodFromNpc(npc) {
   } catch {}
   if (npc.hasTag(CONFIG.TAG_HAS_ROD)) npc.removeTag(CONFIG.TAG_HAS_ROD);
   return existingRod;
+}
+
+// -------------------------------------------------------------
+// FISHING LINE PARTICLE TRAIL & VECTOR INTERPOLATION
+// -------------------------------------------------------------
+
+/**
+ * Calculate approximate rod tip coordinate based on NPC position, eye height, and facing direction offset
+ * @param {import("@minecraft/server").Entity} entity
+ * @returns {{x: number, y: number, z: number}}
+ */
+function getRodTipLocation(entity) {
+  const loc = entity.location;
+  let dirX = 0;
+  let dirZ = 1;
+  try {
+    const rot = entity.getRotation();
+    const rad = (rot.y * Math.PI) / 180;
+    dirX = -Math.sin(rad);
+    dirZ = Math.cos(rad);
+  } catch {
+    try {
+      const view = entity.getViewDirection();
+      const mag = Math.hypot(view.x, view.z);
+      if (mag > 0.001) {
+        dirX = view.x / mag;
+        dirZ = view.z / mag;
+      }
+    } catch {}
+  }
+  const perpX = -dirZ;
+  const perpZ = dirX;
+
+  return {
+    x: loc.x + dirX * 0.6 - perpX * 0.25,
+    y: loc.y + 1.2,
+    z: loc.z + dirZ * 0.6 - perpZ * 0.25,
+  };
+}
+
+/**
+ * Render simulated fishing line particle trail between rod tip and water bobber using linear interpolation
+ * @param {import("@minecraft/server").Dimension} dimension
+ * @param {{x: number, y: number, z: number}} p1 Rod tip coordinate
+ * @param {{x: number, y: number, z: number}} p2 Water bobber coordinate
+ * @param {number} [steps=6] Number of interpolation steps
+ */
+function spawnFishingLineTrail(dimension, p1, p2, steps = 6) {
+  if (!p1 || !p2 || !dimension) return;
+  for (let i = 1; i <= steps; i++) {
+    const t = i / (steps + 1);
+    const interpPos = {
+      x: p1.x + (p2.x - p1.x) * t,
+      y: p1.y + (p2.y - p1.y) * t - Math.sin(t * Math.PI) * 0.12,
+      z: p1.z + (p2.z - p1.z) * t,
+    };
+    try {
+      dimension.spawnParticle("minecraft:basic_crit_particle", interpPos);
+    } catch {
+      try {
+        dimension.spawnParticle("minecraft:endrod", interpPos);
+      } catch {}
+    }
+  }
+}
+
+// -------------------------------------------------------------
+// CONTAINER INSERTION & GUARANTEED DROP FALLBACK
+// -------------------------------------------------------------
+
+/**
+ * Deliver caught item to adjacent container (chest/barrel/hopper) with guaranteed ground spawn fallback
+ * @param {import("@minecraft/server").Entity} npc
+ * @param {ItemStack} itemStack
+ */
+function deliverCaughtItem(npc, itemStack) {
+  if (!npc.isValid() || !itemStack || itemStack.amount <= 0) return;
+
+  const dimension = npc.dimension;
+  const loc = npc.location;
+
+  let dirX = 0;
+  let dirZ = 1;
+  try {
+    const rot = npc.getRotation();
+    const rad = (rot.y * Math.PI) / 180;
+    dirX = -Math.sin(rad);
+    dirZ = Math.cos(rad);
+  } catch {}
+
+  const spawnLocation = {
+    x: loc.x + dirX * 0.4,
+    y: loc.y + 0.25,
+    z: loc.z + dirZ * 0.4,
+  };
+
+  let remainingItem = itemStack;
+
+  try {
+    const blockX = Math.floor(loc.x);
+    const blockY = Math.floor(loc.y);
+    const blockZ = Math.floor(loc.z);
+
+    // Search adjacent blocks around NPC for containers (under, cardinal sides, diagonal, top)
+    const offsets = [
+      { dx: 0, dy: -1, dz: 0 }, // under NPC (chest/hopper)
+      { dx: 1, dy: 0, dz: 0 },
+      { dx: -1, dy: 0, dz: 0 },
+      { dx: 0, dy: 0, dz: 1 },
+      { dx: 0, dy: 0, dz: -1 },
+      { dx: 1, dy: -1, dz: 0 },
+      { dx: -1, dy: -1, dz: 0 },
+      { dx: 0, dy: -1, dz: 1 },
+      { dx: 0, dy: -1, dz: -1 },
+      { dx: 0, dy: 1, dz: 0 },
+    ];
+
+    for (const off of offsets) {
+      if (!remainingItem || remainingItem.amount <= 0) break;
+      try {
+        const block = dimension.getBlock({
+          x: blockX + off.dx,
+          y: blockY + off.dy,
+          z: blockZ + off.dz,
+        });
+        if (!block) continue;
+
+        const invComp = block.getComponent("inventory");
+        if (invComp && invComp.container) {
+          remainingItem = invComp.container.addItem(remainingItem);
+        }
+      } catch {}
+    }
+  } catch (err) {
+    console.warn(`[AutoFisher] Container delivery check failed: ${err}`);
+  }
+
+  // Fallback: spawn leftover item directly in front of the NPC
+  if (remainingItem && remainingItem.amount > 0) {
+    try {
+      dimension.spawnItem(remainingItem, spawnLocation);
+    } catch (spawnErr) {
+      console.warn(`[AutoFisher] Fallback item spawn failed: ${spawnErr}`);
+    }
+  }
 }
 
 // -------------------------------------------------------------
@@ -493,7 +651,7 @@ function startCasting(entity, session, waterPos, lureLevel) {
 }
 
 /**
- * Complete the reel-in: reward catch, launch item to feet, award 1-6 XP
+ * Complete the reel-in: reward catch, insert into chest or drop at feet, award 1-6 XP
  * @param {import("@minecraft/server").Entity} entity
  * @param {SessionState} session
  * @param {number} luckLevel
@@ -513,28 +671,9 @@ function completeReel(entity, session, luckLevel) {
     dimension.spawnParticle("minecraft:water_splash_particle", bobberPos);
   } catch {}
 
-  // 3. Roll loot with Luck of the Sea and spawn item flying towards NPC feet
+  // 3. Roll loot with Luck of the Sea and deliver to container or fallback to ground
   const loot = rollFishingLoot(luckLevel);
-  try {
-    const itemEntity = dimension.spawnItem(loot, bobberPos);
-    if (itemEntity) {
-      const dx = entity.location.x - bobberPos.x;
-      const dy = entity.location.y - bobberPos.y;
-      const dz = entity.location.z - bobberPos.z;
-      const dist = Math.hypot(dx, dz) || 1;
-
-      try {
-        itemEntity.clearVelocity?.();
-        itemEntity.applyImpulse({
-          x: (dx / dist) * Math.min(dist * 0.22, 0.5),
-          y: 0.38 + Math.max(dy * 0.08, 0),
-          z: (dz / dist) * Math.min(dist * 0.22, 0.5),
-        });
-      } catch {}
-    }
-  } catch (err) {
-    console.warn(`[AutoFisher] Failed to spawn caught item: ${err}`);
-  }
+  deliverCaughtItem(entity, loot);
 
   // 4. Stored XP System: Roll 1 to 6 XP per successful catch
   const xpRoll = Math.floor(Math.random() * 6) + 1;
@@ -646,7 +785,19 @@ function updateFisherman(entity) {
   // Check if NPC has a Fishing Rod
   let hasRod = entity.hasTag(CONFIG.TAG_HAS_ROD);
 
-  // If no rod yet, check if a player dropped one nearby (Option 2)
+  // If no tag yet, check if entity already holds a rod (e.g. from equipment loot table)
+  if (!hasRod) {
+    const equippable = entity.getComponent("minecraft:equippable") || entity.getComponent("equippable");
+    if (equippable) {
+      const held = equippable.getEquipment(EquipmentSlot.Mainhand);
+      if (held && held.typeId === CONFIG.ROD_IDENTIFIER) {
+        entity.addTag(CONFIG.TAG_HAS_ROD);
+        hasRod = true;
+      }
+    }
+  }
+
+  // If still no rod, check if a player dropped one nearby (Option 2)
   if (!hasRod) {
     checkForDroppedRod(entity);
     hasRod = entity.hasTag(CONFIG.TAG_HAS_ROD);
@@ -662,7 +813,7 @@ function updateFisherman(entity) {
   }
 
   // Inspect equipped rod in mainhand & protect infinite durability
-  const equippable = entity.getComponent("equippable");
+  const equippable = entity.getComponent("minecraft:equippable") || entity.getComponent("equippable");
   let heldRod;
   if (equippable) {
     heldRod = equippable.getEquipment(EquipmentSlot.Mainhand);
@@ -689,8 +840,19 @@ function updateFisherman(entity) {
     return;
   }
 
-  // Scan for water block
-  const waterPos = findWaterInFront(entity);
+  // Water verification: If waiting and target water is still liquid, keep it!
+  // Otherwise, search for water block in front
+  let waterPos = null;
+  if (session.state === "WAITING" && session.targetWater) {
+    if (isWaterBlock(entity.dimension, session.targetWater)) {
+      waterPos = session.targetWater;
+    }
+  }
+
+  if (!waterPos) {
+    waterPos = findWaterInFront(entity);
+  }
+
   if (!waterPos) {
     if (session.state !== "IDLE") {
       session.state = "IDLE";
@@ -717,15 +879,19 @@ function updateFisherman(entity) {
     case "WAITING":
       session.waitTicks -= CONFIG.POLL_INTERVAL_TICKS;
 
-      // 4. Immersion: Particle Effects at water surface
+      // Simulated Fishing Line Particle Trail from rod tip to bobber
       if (session.bobberPos) {
+        const rodTip = getRodTipLocation(entity);
+        spawnFishingLineTrail(entity.dimension, rodTip, session.bobberPos, 6);
+
+        // Water surface bobber particles
         try {
           entity.dimension.spawnParticle("minecraft:bubble_column_up_particle", session.bobberPos);
           entity.dimension.spawnParticle("minecraft:water_splash_particle", session.bobberPos);
         } catch {}
 
         // Play sound random.splash right before reel-in to indicate a fish biting
-        if (session.waitTicks <= 30 && !session.biteAlerted) {
+        if (session.waitTicks <= 20 && !session.biteAlerted) {
           session.biteAlerted = true;
           try {
             entity.dimension.playSound("random.splash", session.bobberPos, { volume: 1.0, pitch: 1.2 });
@@ -782,7 +948,7 @@ function openFishermanControlPanel(player, npc) {
       `§f• Status: ${statusText}\n` +
       `§f• Fishing Rod: ${rodInfo}\n` +
       `§f• Stored XP: §a${storedXp}\n` +
-      `§f• Output: §bDrops directly at feet\n\n` +
+      `§f• Output: §bAdjacent Chest / Dropped at feet\n\n` +
       `§7💡 Tip: Drop a Fishing Rod near the NPC to equip it automatically!`
     )
     .button(
@@ -1141,6 +1307,9 @@ world.beforeEvents.itemUseOn.subscribe((event) => {
       const yaw = Math.atan2(-forwardDir.x, forwardDir.z) * (180 / Math.PI);
       npc.setRotation({ x: 0, y: yaw });
 
+      // Automatically equip fishing rod upon placement
+      equipRodOnNpc(npc);
+
       dimension.playSound("random.pop", spawnPos, { volume: 1.0, pitch: 1.0 });
       dimension.spawnParticle("minecraft:villager_happy", {
         x: spawnPos.x,
@@ -1150,7 +1319,7 @@ world.beforeEvents.itemUseOn.subscribe((event) => {
 
       consumeHandItem(player);
       player.onScreenDisplay?.setActionBar(
-        "§aFisherman placed! Configure via UI or drop a Fishing Rod on the NPC."
+        "§aFisherman placed! Equipped with Fishing Rod and ready to fish."
       );
     } catch (err) {
       console.warn(`[AutoFisher] Failed to spawn fisherman: ${err}`);
