@@ -10,7 +10,7 @@
           ],
           "transitions": [
             {
-              "fishing": "query.property('custom:is_fishing') || query.variant == 1"
+              "fishing": "query.property('custom:is_fishing')"
             }
           ],
           "blend_transition": 0.2
@@ -21,10 +21,27 @@
           ],
           "transitions": [
             {
-              "idle": "!query.property('custom:is_fishing') && query.variant == 0"
+              "reel": "query.property('custom:is_reeling')"
+            },
+            {
+              "idle": "!query.property('custom:is_fishing')"
             }
           ],
           "blend_transition": 0.2
+        },
+        "reel": {
+          "animations": [
+            "reel"
+          ],
+          "transitions": [
+            {
+              "fishing": "!query.property('custom:is_reeling') && query.property('custom:is_fishing')"
+            },
+            {
+              "idle": "!query.property('custom:is_fishing')"
+            }
+          ],
+          "blend_transition": 0.15
         }
       }
     }

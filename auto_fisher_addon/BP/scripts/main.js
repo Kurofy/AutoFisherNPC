@@ -4,26 +4,30 @@ import { ActionFormData } from "@minecraft/server-ui";
 /**
  * Production-ready Auto-Fisherman NPC Script
  * Minecraft Bedrock Edition (1.21.x+)
- * Version: 1.4.0
+ * Version: 1.5.0 - Player-Like Fishing Mechanics & 3D Rod System
  * Author: kurofy
  * 
- * Key Features in v1.4.0:
- * - Version 1.4.0 in Control Panel UI and Localization
- * - Universal Configure UI accessible when holding ANY item or rod
+ * Major Features in v1.5.0:
+ * - 3D Visible Fishing Rod rendered in hand via custom geometry & render controller
+ * - Authentic Player-Like Fishing Mechanics:
+ *   * Rod casting with water landing splash
+ *   * Visible fishing line particles connecting rod tip to the water bobber
+ *   * Surface ripple & approaching fish wake bubble trails
+ *   * Realistic bite splash & reel audio
+ *   * Caught items fly through the air towards the NPC's feet (applyImpulse)
+ *   * Reel animation pulling the rod back into the air
+ * - Fixed persistent session lifecycle (eliminated sound spamming & lack of output)
  * - Dual Rod Giving System:
  *   1) UI button takes rod directly from player inventory (no need to hold)
- *   2) Players can drop a fishing rod onto the NPC and it automatically equips it
- * - Stored EXP System: NPC collects 1-6 EXP per catch; players collect stored EXP via UI button
- * - Inactive state enforcement: NPC is completely inactive with idle animation when it has no rod
- * - Real 3D Fishing Rod equipped and held in hand via attachables
- * - Direction-aware water detection with 360-degree fallback search and auto-alignment
- * - Authentic splash sounds, bubble wake particles, and vanilla fishing loot dropped at feet
+ *   2) Players can drop a fishing rod onto the NPC to equip it automatically
+ * - Stored Experience (EXP) System: collects 1-6 EXP per catch; collect via UI
+ * - Strict Inactive state enforcement when NPC has no rod
  */
 
 const CONFIG = {
-  VERSION: "1.4.0",
-  PANEL_TITLE: "§6FISHERMAN Control Panel (v1.4.0)",
-  POLL_INTERVAL_TICKS: 20, // 1 second
+  VERSION: "1.5.0",
+  PANEL_TITLE: "§6FISHERMAN Control Panel (v1.5.0)",
+  POLL_INTERVAL_TICKS: 10, // 0.5 seconds for smooth line & particle updates
   NPC_IDENTIFIER: "custom:fisherman_npc",
   SPAWN_EGG_IDENTIFIER: "custom:fisherman_spawn_egg",
   ROD_IDENTIFIER: "minecraft:fishing_rod",
@@ -32,8 +36,10 @@ const CONFIG = {
   TAG_PAUSED: "fisher_paused",
   TAG_FISHING: "fishing",
   PROPERTY_IS_FISHING: "custom:is_fishing",
+  PROPERTY_HAS_ROD: "custom:has_rod",
+  PROPERTY_IS_REELING: "custom:is_reeling",
   MIN_WAIT_TICKS: 100, // 5 seconds
-  MAX_WAIT_TICKS: 200, // 10 seconds
+  MAX_WAIT_TICKS: 180, // 9 seconds
   EXP_OBJECTIVE_NAME: "fisher_exp",
 };
 
@@ -83,11 +89,11 @@ const LOOT_CATEGORIES = [
 
 /**
  * @typedef {Object} SessionState
- * @property {string} state - "IDLE" | "WAITING" | "COOLDOWN"
+ * @property {"IDLE" | "WAITING" | "REELING"} state
  * @property {{x: number, y: number, z: number} | null} targetWater
- * @property {number} waitTicksRemaining
- * @property {number} cooldownTicksRemaining
- * @property {boolean} biteNotified
+ * @property {{x: number, y: number, z: number} | null} bobberPos
+ * @property {number} waitTicks
+ * @property {boolean} biteAlerted
  */
 
 /** @type {Map<string, SessionState>} */
@@ -379,48 +385,31 @@ function rollFishingLoot() {
 }
 
 /**
- * Equip a Fishing Rod in the NPC's mainhand socket
- * @param {import("@minecraft/server").Entity} npc
- */
-function equipRodOnNpc(npc) {
-  try {
-    const equip = npc.getComponent("equippable");
-    if (equip) {
-      equip.setEquipment("Mainhand", new ItemStack(CONFIG.ROD_IDENTIFIER, 1));
-    }
-  } catch (err) {
-    console.warn(`[AutoFisher] Failed to set mainhand equipment: ${err}`);
-  }
-}
-
-/**
- * Unequip the Fishing Rod from the NPC's mainhand
- * @param {import("@minecraft/server").Entity} npc
- */
-function unequipRodFromNpc(npc) {
-  try {
-    const equip = npc.getComponent("equippable");
-    if (equip) {
-      equip.setEquipment("Mainhand", undefined);
-    }
-  } catch {}
-}
-
-/**
- * Set entity client-side fishing state and animation triggers
+ * Set entity client-side states (fishing rod visibility, fishing state, reeling)
  * @param {import("@minecraft/server").Entity} entity
+ * @param {boolean} hasRod
  * @param {boolean} isFishing
+ * @param {boolean} isReeling
  */
-function setEntityFishingState(entity, isFishing) {
+function syncEntityVisuals(entity, hasRod, isFishing, isReeling = false) {
+  try {
+    entity.setProperty(CONFIG.PROPERTY_HAS_ROD, hasRod);
+  } catch {}
   try {
     entity.setProperty(CONFIG.PROPERTY_IS_FISHING, isFishing);
   } catch {}
-
   try {
-    entity.triggerEvent(isFishing ? "custom:start_fishing" : "custom:stop_fishing");
+    entity.setProperty(CONFIG.PROPERTY_IS_REELING, isReeling);
   } catch {}
 
+  // Sync tags
   try {
+    if (hasRod) {
+      if (!entity.hasTag(CONFIG.TAG_HAS_ROD)) entity.addTag(CONFIG.TAG_HAS_ROD);
+    } else {
+      if (entity.hasTag(CONFIG.TAG_HAS_ROD)) entity.removeTag(CONFIG.TAG_HAS_ROD);
+    }
+
     if (isFishing) {
       if (!entity.hasTag(CONFIG.TAG_FISHING)) entity.addTag(CONFIG.TAG_FISHING);
     } else {
@@ -429,81 +418,168 @@ function setEntityFishingState(entity, isFishing) {
   } catch {}
 }
 
-// -------------------------------------------------------------
-// FISHING STATE MACHINE
-// -------------------------------------------------------------
-
 /**
- * Start casting fishing line into target water
- * @param {import("@minecraft/server").Entity} entity
- * @param {SessionState} session
+ * Equip a Fishing Rod in the NPC's mainhand socket & show 3D rod model
+ * @param {import("@minecraft/server").Entity} npc
  */
-function startCasting(entity, session) {
-  setEntityFishingState(entity, true);
-
-  if (session.targetWater) {
-    const splashPos = {
-      x: session.targetWater.x + 0.5,
-      y: session.targetWater.y + 0.85,
-      z: session.targetWater.z + 0.5,
-    };
-    try {
-      entity.dimension.playSound("random.splash", splashPos, { volume: 0.8, pitch: 1.0 });
-      entity.dimension.spawnParticle("minecraft:water_splash_particle", splashPos);
-    } catch {}
-  }
-
-  const waitTicks = Math.floor(
-    Math.random() * (CONFIG.MAX_WAIT_TICKS - CONFIG.MIN_WAIT_TICKS + 1)
-  ) + CONFIG.MIN_WAIT_TICKS;
-
-  session.state = "WAITING";
-  session.waitTicksRemaining = waitTicks;
-  session.biteNotified = false;
+function equipRodOnNpc(npc) {
+  syncEntityVisuals(npc, true, false, false);
+  try {
+    npc.triggerEvent("custom:give_rod");
+  } catch {}
+  try {
+    const equip = npc.getComponent("equippable");
+    if (equip) {
+      equip.setEquipment("Mainhand", new ItemStack(CONFIG.ROD_IDENTIFIER, 1));
+    }
+  } catch {}
 }
 
 /**
- * Complete reel-in, drop caught loot at feet, and collect EXP
+ * Unequip the Fishing Rod from the NPC's mainhand & hide 3D rod model
+ * @param {import("@minecraft/server").Entity} npc
+ */
+function unequipRodFromNpc(npc) {
+  syncEntityVisuals(npc, false, false, false);
+  try {
+    npc.triggerEvent("custom:take_rod");
+  } catch {}
+  try {
+    const equip = npc.getComponent("equippable");
+    if (equip) {
+      equip.setEquipment("Mainhand", undefined);
+    }
+  } catch {}
+}
+
+// -------------------------------------------------------------
+// PLAYER-LIKE FISHING MECHANISM (v1.5.0)
+// -------------------------------------------------------------
+
+/**
+ * Start casting the fishing line into the target water block (like a player)
+ * @param {import("@minecraft/server").Entity} entity
+ * @param {SessionState} session
+ * @param {{x: number, y: number, z: number}} waterPos
+ */
+function startCasting(entity, session, waterPos) {
+  const dimension = entity.dimension;
+  const bobberPos = {
+    x: waterPos.x + 0.5,
+    y: waterPos.y + 0.85,
+    z: waterPos.z + 0.5,
+  };
+
+  session.state = "WAITING";
+  session.targetWater = waterPos;
+  session.bobberPos = bobberPos;
+  session.waitTicks = Math.floor(
+    Math.random() * (CONFIG.MAX_WAIT_TICKS - CONFIG.MIN_WAIT_TICKS + 1)
+  ) + CONFIG.MIN_WAIT_TICKS;
+  session.biteAlerted = false;
+
+  syncEntityVisuals(entity, true, true, false);
+  try {
+    entity.triggerEvent("custom:start_fishing");
+  } catch {}
+
+  // Initial cast splash sound & particles on the water bobber
+  try {
+    dimension.playSound("random.splash", bobberPos, { volume: 0.8, pitch: 1.0 });
+    dimension.spawnParticle("minecraft:water_splash_particle", bobberPos);
+  } catch {}
+}
+
+/**
+ * Render authentic fishing line particles from NPC's rod tip to the water bobber
+ * @param {import("@minecraft/server").Entity} entity
+ * @param {{x: number, y: number, z: number}} bobberPos
+ */
+function renderFishingLine(entity, bobberPos) {
+  try {
+    const loc = entity.location;
+    const rot = entity.getRotation();
+    const rad = (rot.y * Math.PI) / 180;
+    const dirX = -Math.sin(rad);
+    const dirZ = Math.cos(rad);
+
+    // Position of the 3D fishing rod tip extending from the right hand
+    const rodTipPos = {
+      x: loc.x + dirX * 0.75 - dirZ * 0.25,
+      y: loc.y + 1.25,
+      z: loc.z + dirZ * 0.75 + dirX * 0.25,
+    };
+
+    const dim = entity.dimension;
+
+    // Draw 3 subtle line particles along the line vector
+    for (const t of [0.3, 0.6, 0.85]) {
+      const px = rodTipPos.x + (bobberPos.x - rodTipPos.x) * t;
+      const py = rodTipPos.y + (bobberPos.y - rodTipPos.y) * t;
+      const pz = rodTipPos.z + (bobberPos.z - rodTipPos.z) * t;
+
+      dim.spawnParticle("minecraft:falling_dust_gravel_particle", {
+        x: px,
+        y: py,
+        z: pz,
+      });
+    }
+  } catch {}
+}
+
+/**
+ * Complete the reel-in: trigger bite splash, fly caught item to player/NPC feet, and collect EXP
  * @param {import("@minecraft/server").Entity} entity
  * @param {SessionState} session
  */
-function completeReel(entity, session) {
+function completeReelIn(entity, session) {
   const dimension = entity.dimension;
-  const targetWater = session.targetWater;
+  const bobberPos = session.bobberPos || {
+    x: entity.location.x,
+    y: entity.location.y,
+    z: entity.location.z,
+  };
 
-  if (targetWater) {
-    const splashPos = {
-      x: targetWater.x + 0.5,
-      y: targetWater.y + 0.85,
-      z: targetWater.z + 0.5,
-    };
-    try {
-      dimension.playSound("random.bowhit", entity.location, { volume: 1.0, pitch: 1.2 });
-      dimension.playSound("random.splash", splashPos, { volume: 1.0, pitch: 1.2 });
-      dimension.spawnParticle("minecraft:water_splash_particle", splashPos);
-      dimension.spawnParticle("minecraft:water_wake_particle", splashPos);
-    } catch {}
-  }
+  // 1. Splash & reel sounds
+  try {
+    dimension.playSound("random.splash", bobberPos, { volume: 1.0, pitch: 1.3 });
+    dimension.playSound("random.bowhit", entity.location, { volume: 1.0, pitch: 1.2 });
+  } catch {}
 
+  // 2. Splash and wake particle explosion at water bobber
+  try {
+    dimension.spawnParticle("minecraft:water_splash_particle", bobberPos);
+    dimension.spawnParticle("minecraft:water_wake_particle", bobberPos);
+  } catch {}
+
+  // 3. Trigger reel animation on NPC
+  syncEntityVisuals(entity, true, true, true);
   try {
     entity.triggerEvent("custom:catch_fish");
   } catch {}
 
-  // 1. Drop loot item directly below the NPC / at feet (like regular player)
+  // 4. Roll fishing loot and spawn item with physical impulse flying to NPC feet
   const loot = rollFishingLoot();
-  const dropPos = {
-    x: entity.location.x,
-    y: entity.location.y + 0.1,
-    z: entity.location.z,
-  };
-
   try {
-    dimension.spawnItem(loot, dropPos);
+    const itemEntity = dimension.spawnItem(loot, bobberPos);
+    if (itemEntity) {
+      const dx = entity.location.x - bobberPos.x;
+      const dy = entity.location.y - bobberPos.y;
+      const dz = entity.location.z - bobberPos.z;
+      const dist = Math.hypot(dx, dz) || 1;
+
+      itemEntity.clearVelocity?.();
+      itemEntity.applyImpulse({
+        x: (dx / dist) * Math.min(dist * 0.22, 0.5),
+        y: 0.38 + Math.max(dy * 0.08, 0),
+        z: (dz / dist) * Math.min(dist * 0.22, 0.5),
+      });
+    }
   } catch (err) {
-    console.warn(`[AutoFisher] Failed to spawn caught item: ${err}`);
+    console.warn(`[AutoFisher] Failed to spawn/launch caught item: ${err}`);
   }
 
-  // 2. Collect 1 to 6 EXP points into NPC stored EXP
+  // 5. Collect 1 to 6 EXP points into NPC stored EXP
   const expGained = Math.floor(Math.random() * 6) + 1;
   addStoredExp(entity, expGained);
 
@@ -515,9 +591,9 @@ function completeReel(entity, session) {
     });
   } catch {}
 
-  // Cooldown before next cast (20 ticks / 1 second)
-  session.state = "COOLDOWN";
-  session.cooldownTicksRemaining = 20;
+  // 6. Enter REELING state (1.5 seconds cooldown) to let reel animation & item flight complete
+  session.state = "REELING";
+  session.waitTicks = 30; // 30 ticks = 1.5 seconds
 }
 
 // -------------------------------------------------------------
@@ -554,7 +630,6 @@ function checkForDroppedRod(npc) {
         }
 
         equipRodOnNpc(npc);
-        npc.addTag(CONFIG.TAG_HAS_ROD);
 
         const loc = npc.location;
         const dim = npc.dimension;
@@ -601,9 +676,9 @@ function updateFisherman(entity) {
     session = {
       state: "IDLE",
       targetWater: null,
-      waitTicksRemaining: 0,
-      cooldownTicksRemaining: 0,
-      biteNotified: false,
+      bobberPos: null,
+      waitTicks: 0,
+      biteAlerted: false,
     };
     activeSessions.set(entity.id, session);
   }
@@ -611,7 +686,7 @@ function updateFisherman(entity) {
   // Check if NPC has a Fishing Rod
   let hasRod = entity.hasTag(CONFIG.TAG_HAS_ROD);
 
-  // If no rod yet, check if a player dropped a fishing rod nearby (Option 2)
+  // If no rod yet, check for dropped rods on the ground (Option 2)
   if (!hasRod) {
     checkForDroppedRod(entity);
     hasRod = entity.hasTag(CONFIG.TAG_HAS_ROD);
@@ -619,45 +694,47 @@ function updateFisherman(entity) {
 
   // INACTIVE ENFORCEMENT: When there is NO rod, NPC must be completely inactive!
   if (!hasRod) {
-    unequipRodFromNpc(entity);
-    if (session.state !== "IDLE") {
-      setEntityFishingState(entity, false);
-      session.state = "IDLE";
-      session.targetWater = null;
-    }
+    syncEntityVisuals(entity, false, false, false);
+    session.state = "IDLE";
+    session.targetWater = null;
+    session.bobberPos = null;
+    session.waitTicks = 0;
     return;
   }
 
-  // Ensure held item is visually equipped in mainhand
-  try {
-    const equip = entity.getComponent("equippable");
-    if (equip) {
-      const held = equip.getEquipment("Mainhand");
-      if (!held || held.typeId !== CONFIG.ROD_IDENTIFIER) {
-        equip.setEquipment("Mainhand", new ItemStack(CONFIG.ROD_IDENTIFIER, 1));
-      }
-    }
-  } catch {}
+  // Ensure 3D rod is visible when rod is equipped
+  syncEntityVisuals(entity, true, session.state !== "IDLE", session.state === "REELING");
 
-  // Check if NPC is manually paused via toggle
+  // Check if manually paused via toggle
   const isPaused = entity.hasTag(CONFIG.TAG_PAUSED);
   if (isPaused) {
     if (session.state !== "IDLE") {
-      setEntityFishingState(entity, false);
       session.state = "IDLE";
       session.targetWater = null;
+      session.bobberPos = null;
+      session.waitTicks = 0;
+      syncEntityVisuals(entity, true, false, false);
+      try {
+        entity.triggerEvent("custom:stop_fishing");
+      } catch {}
     }
     return;
   }
 
-  // Scan for water in front or surrounding
+  // Scan for water block
   const waterPos = findWaterInFront(entity);
   if (!waterPos) {
     if (session.state !== "IDLE") {
-      setEntityFishingState(entity, false);
       session.state = "IDLE";
       session.targetWater = null;
+      session.bobberPos = null;
+      session.waitTicks = 0;
+      syncEntityVisuals(entity, true, false, false);
+      try {
+        entity.triggerEvent("custom:stop_fishing");
+      } catch {}
     }
+    // Ambient confusion particles when facing dry ground
     try {
       entity.dimension.spawnParticle("minecraft:villager_angry", {
         x: entity.location.x,
@@ -668,54 +745,57 @@ function updateFisherman(entity) {
     return;
   }
 
-  session.targetWater = waterPos;
-
-  // State Machine execution
+  // State Machine Execution
   switch (session.state) {
     case "IDLE":
-      startCasting(entity, session);
+      startCasting(entity, session, waterPos);
       break;
 
     case "WAITING":
-      session.waitTicksRemaining -= CONFIG.POLL_INTERVAL_TICKS;
+      session.waitTicks -= CONFIG.POLL_INTERVAL_TICKS;
 
-      // Periodic water wake bubbles
-      if (session.targetWater) {
-        const wakePos = {
-          x: session.targetWater.x + 0.5,
-          y: session.targetWater.y + 0.85,
-          z: session.targetWater.z + 0.5,
-        };
+      if (session.bobberPos) {
+        // 1. Water ripple bubbles at bobber
+        try {
+          entity.dimension.spawnParticle("minecraft:water_wake_particle", session.bobberPos);
+        } catch {}
 
-        if (!session.biteNotified && session.waitTicksRemaining <= 30) {
-          session.biteNotified = true;
+        // 2. Fishing line connecting rod tip to bobber
+        renderFishingLine(entity, session.bobberPos);
+
+        // 3. Approaching fish wake bubbles (last 30 ticks / 1.5 seconds before bite)
+        if (session.waitTicks <= 30 && !session.biteAlerted) {
+          session.biteAlerted = true;
           try {
-            entity.dimension.playSound("random.splash", wakePos, { volume: 0.9, pitch: 1.1 });
-            entity.dimension.spawnParticle("minecraft:water_splash_particle", wakePos);
-          } catch {}
-        } else {
-          try {
-            entity.dimension.spawnParticle("minecraft:water_wake_particle", wakePos);
+            entity.dimension.playSound("random.splash", session.bobberPos, { volume: 0.9, pitch: 1.1 });
+            entity.dimension.spawnParticle("minecraft:water_splash_particle", session.bobberPos);
           } catch {}
         }
       }
 
-      if (session.waitTicksRemaining <= 0) {
-        completeReel(entity, session);
+      // Time to bite & reel!
+      if (session.waitTicks <= 0) {
+        completeReelIn(entity, session);
       }
       break;
 
-    case "COOLDOWN":
-      session.cooldownTicksRemaining -= CONFIG.POLL_INTERVAL_TICKS;
-      if (session.cooldownTicksRemaining <= 0) {
-        startCasting(entity, session);
+    case "REELING":
+      session.waitTicks -= CONFIG.POLL_INTERVAL_TICKS;
+
+      // When reeling duration finishes, reset to idle to begin next cast
+      if (session.waitTicks <= 0) {
+        syncEntityVisuals(entity, true, false, false);
+        try {
+          entity.triggerEvent("custom:end_reel");
+        } catch {}
+        session.state = "IDLE";
       }
       break;
   }
 }
 
 // -------------------------------------------------------------
-// CONTROL PANEL UI (v1.4.0)
+// CONTROL PANEL UI (v1.5.0)
 // -------------------------------------------------------------
 
 /**
@@ -740,7 +820,7 @@ function openFishermanControlPanel(player, npc) {
     .body(
       `§7Manage this Fisherman NPC:\n\n` +
       `§f• Status: ${statusText}\n` +
-      `§f• Fishing Rod: ${hasRod ? "§aEquipped (Holding Rod)" : "§cNone (Give rod to activate)"}\n` +
+      `§f• Fishing Rod: ${hasRod ? "§aEquipped (Holding 3D Rod)" : "§cNone (Give rod to activate)"}\n` +
       `§f• Stored EXP: §a${storedExp} XP\n` +
       `§f• Output: §bDrops directly at feet\n\n` +
       `§7💡 Tip: Drop a Fishing Rod near the NPC to equip it automatically!`
@@ -787,9 +867,15 @@ function openFishermanControlPanel(player, npc) {
           player.dimension.playSound("random.orb", player.location, { volume: 0.8, pitch: 1.2 });
         } else {
           npc.addTag(CONFIG.TAG_PAUSED);
-          setEntityFishingState(npc, false);
+          syncEntityVisuals(npc, true, false, false);
+          try {
+            npc.triggerEvent("custom:stop_fishing");
+          } catch {}
           const session = activeSessions.get(npc.id);
-          if (session) session.state = "IDLE";
+          if (session) {
+            session.state = "IDLE";
+            session.waitTicks = 0;
+          }
           player.onScreenDisplay?.setActionBar("§c[Fisherman] Status set to PAUSED!");
           player.dimension.playSound("random.orb", player.location, { volume: 0.8, pitch: 0.8 });
         }
@@ -801,11 +887,15 @@ function openFishermanControlPanel(player, npc) {
         if (hasRod) {
           // Take back rod
           npc.removeTag(CONFIG.TAG_HAS_ROD);
-          setEntityFishingState(npc, false);
-          uneunequipRod(npc);
+          unequipRodFromNpc(npc);
 
           const session = activeSessions.get(npc.id);
-          if (session) session.state = "IDLE";
+          if (session) {
+            session.state = "IDLE";
+            session.waitTicks = 0;
+            session.targetWater = null;
+            session.bobberPos = null;
+          }
 
           giveOrDropItem(player, new ItemStack(CONFIG.ROD_IDENTIFIER, 1));
           player.dimension.playSound("random.pop", npc.location, { volume: 1.0, pitch: 1.0 });
@@ -815,7 +905,6 @@ function openFishermanControlPanel(player, npc) {
           if (playerHasFishingRod(player)) {
             consumeFishingRodFromPlayer(player);
             equipRodOnNpc(npc);
-            npc.addTag(CONFIG.TAG_HAS_ROD);
 
             player.dimension.playSound("armor.equip_generic", npc.location, { volume: 1.0, pitch: 1.0 });
             player.dimension.spawnParticle("minecraft:villager_happy", {
@@ -867,14 +956,6 @@ function openFishermanControlPanel(player, npc) {
   };
 
   tryShow();
-}
-
-/**
- * Unequip rod helper wrapper
- * @param {import("@minecraft/server").Entity} npc
- */
-function uneunequipRod(npc) {
-  unequipRodFromNpc(npc);
 }
 
 /**
@@ -1038,7 +1119,7 @@ function consumeHandItem(player) {
 // EVENT LISTENERS
 // -------------------------------------------------------------
 
-// 1. Placement via custom:fisherman_spawn_egg (Enforces water in front)
+// 1. Placement via custom:fisherman_spawn_egg (Enforces water in front or nearby)
 world.beforeEvents.itemUseOn.subscribe((event) => {
   const { itemStack, source: player, block, blockFace } = event;
   if (!itemStack || itemStack.typeId !== CONFIG.SPAWN_EGG_IDENTIFIER) return;
@@ -1106,7 +1187,7 @@ world.beforeEvents.itemUseOn.subscribe((event) => {
   });
 });
 
-// 2. Interaction handling (Opens Control Panel even when holding any item or rod)
+// 2. Interaction handling (Opens Control Panel cleanly when holding any item or rod)
 world.beforeEvents.playerInteractWithEntity.subscribe((event) => {
   const { target: npc, player } = event;
   if (!npc || npc.typeId !== CONFIG.NPC_IDENTIFIER) return;
@@ -1160,7 +1241,7 @@ world.afterEvents.entityDie.subscribe((event) => {
   }
 });
 
-// 5. Master tick polling loop (runs every 20 ticks / 1 second)
+// 5. Master tick polling loop (runs every 10 ticks / 0.5s)
 system.runInterval(() => {
   const dimensions = ["overworld", "nether", "the_end"];
 
@@ -1183,19 +1264,14 @@ system.runInterval(() => {
     } catch {}
   }
 
-  // Cleanup sessions for destroyed/unloaded entities
+  // Safe prune of stale sessions using world.getEntity
   for (const [entityId] of activeSessions) {
-    let exists = false;
-    for (const dimName of dimensions) {
-      try {
-        const dimension = world.getDimension(dimName);
-        if (dimension && dimension.getEntity(entityId)) {
-          exists = true;
-          break;
-        }
-      } catch {}
-    }
-    if (!exists) {
+    try {
+      const e = world.getEntity(entityId);
+      if (!e || !e.isValid()) {
+        activeSessions.delete(entityId);
+      }
+    } catch {
       activeSessions.delete(entityId);
     }
   }

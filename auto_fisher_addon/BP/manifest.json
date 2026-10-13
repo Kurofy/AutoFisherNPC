@@ -4,21 +4,21 @@
     "name": "Auto-Fisherman NPC (BP)",
     "description": "Behavior Pack for Autonomous Fisherman NPC Addon by kurofy",
     "uuid": "f2528453-b865-4376-af00-4a47774f32d4",
-    "version": [1, 4, 0],
+    "version": [1, 5, 0],
     "min_engine_version": [1, 21, 0]
   },
   "modules": [
     {
       "type": "data",
       "uuid": "5be3cc48-4ea9-45d6-a50c-26700e64acc9",
-      "version": [1, 4, 0]
+      "version": [1, 5, 0]
     },
     {
       "type": "script",
       "language": "javascript",
       "uuid": "adb8595a-a0cf-4b66-9317-2cab6e5870af",
       "entry": "scripts/main.js",
-      "version": [1, 4, 0]
+      "version": [1, 5, 0]
     }
   ],
   "dependencies": [

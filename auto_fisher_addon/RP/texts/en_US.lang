@@ -11,7 +11,7 @@ item.custom:fisherman_spawn_egg.name=Fisherman NPC Spawn Egg
 ## Interactions & UI
 action.interact.fisherman=Configure Fisherman
 action.interact.give_rod=Give Fishing Rod
-ui.fisherman.title=Fisherman Control Panel (v1.4.0)
+ui.fisherman.title=Fisherman Control Panel (v1.5.0)
 ui.fisherman.status=Status
 ui.fisherman.stored_exp=Stored Experience
 ui.fisherman.collect_exp=Collect Stored EXP

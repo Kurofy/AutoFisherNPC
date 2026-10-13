@@ -30,7 +30,7 @@
         "controller_fishing": "controller.animation.fisherman_npc.fishing"
       },
       "render_controllers": [
-        "controller.render.default"
+        "controller.render.fisherman_npc"
       ]
     }
   }

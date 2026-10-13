@@ -1,4 +1,4 @@
-# Auto-Fisherman NPC Addon (v1.4.0)
+# Auto-Fisherman NPC Addon (v1.5.0)
 
 **Author:** kurofy  
 **Target Engine:** Minecraft Bedrock Edition (1.21.x+)  
@@ -18,26 +18,21 @@
   - **Constraint:** Checks for water in front or within 2 blocks of the placement spot.
   - The NPC has the floating golden name tag **`§6FISHERMAN`**.
 
-### 2. Dual Giving System & 3D Held Rod (Attachables)
+### 2. Dual Giving System & 3D Held Fishing Rod
 * When spawned without a rod, the NPC is **`🔴 INACTIVE`** and displays a relaxed idle animation with empty hands.
 * **Option 1 (From Inventory Button)**: Open the Control Panel UI by clicking/tapping the NPC with any item or empty hand. Click **"🎣 Give Fishing Rod (From Inventory)"**; it automatically takes 1 rod directly from your inventory.
 * **Option 2 (Drop Rod on NPC)**: Simply drop (throw) a Fishing Rod item near or on the NPC. The NPC automatically detects it, picks it up, equips it, and becomes **`🟢 ACTIVE`**!
-* **3D Held Rod**: The equipped Minecraft Fishing Rod renders directly in the NPC's hand using Bedrock attachables (`rightItem`).
+* **3D Held Rod**: Renders a dedicated 3D wooden fishing rod with reel and guide ring right in the NPC's hand, toggled dynamically with the `custom:has_rod` property in render controllers.
 
-### 3. Experience (EXP) Collection System
-* Every time the NPC catches a fish, it collects **1 to 6 EXP points**.
-* Players can harvest accumulated EXP at any time via the **"✨ Collect Stored EXP"** button in the Control Panel UI.
-* Stored EXP is safely refunded to the player if the NPC is deleted or recalled.
+### 3. Authentic Player-Like Fishing Mechanics (v1.5.0)
+* **Casting:** The NPC raises its arms and casts the line forward into the water with landing splash sound and water splash particles.
+* **Fishing Line & Bobber:** A particle fishing line connects the tip of the rod to the water bobber, which gently ripples the water while waiting.
+* **Approaching Fish Wake:** Water wake bubble trails realistically rush across the water towards the bobber right before a bite.
+* **Bite & Dynamic Reel Motion:** When the fish bites, the bobber splashes, reel audio plays, and the Fisherman plays the **`reel`** animation, jerking the rod into the air!
+* **Physical Flying Loot:** Caught fish and treasure physically launch through the air from the water and fly directly towards the NPC's feet (using `applyImpulse`), landing on the ground just like vanilla player fishing.
+* **Experience Collection:** Collects 1 to 6 EXP points per catch, harvestable via the UI.
 
-### 4. Fishing & Item Drops
-* **Forward & Surrounding Water Scan:** The NPC detects nearby water and casts into it.
-* **Authentic Fishing Cycle:**
-  - Casts the line forward with water splash particles and sound effects.
-  - Spawns periodic water wake bubble particles while waiting (5–10s cycle).
-  - Reeling audio (`random.bowhit`) and splash wake trigger upon catching fish.
-* **Output:** Caught items (fish, junk, treasure) drop **directly below the NPC's feet** like a regular player, allowing easy collection via hoppers or water streams.
-
-### 5. Control Panel UI (v1.4.0)
+### 4. Control Panel UI (v1.5.0)
 Right-click or tap the Fisherman NPC with **any item or empty hand** to open the control panel:
 * **Resume / Pause Fishing:** Instantly toggle fishing on or off.
 * **Give / Take Back Fishing Rod:** Equip from inventory or retrieve your fishing rod at any time.

@@ -11,6 +11,16 @@
           "type": "bool",
           "client_sync": true,
           "default": false
+        },
+        "custom:has_rod": {
+          "type": "bool",
+          "client_sync": true,
+          "default": false
+        },
+        "custom:is_reeling": {
+          "type": "bool",
+          "client_sync": true,
+          "default": false
         }
       }
     },
@@ -123,7 +133,8 @@
           ]
         },
         "set_property": {
-          "custom:is_fishing": true
+          "custom:is_fishing": true,
+          "custom:is_reeling": false
         }
       },
       "custom:stop_fishing": {
@@ -138,12 +149,43 @@
           ]
         },
         "set_property": {
-          "custom:is_fishing": false
+          "custom:is_fishing": false,
+          "custom:is_reeling": false
+        }
+      },
+      "custom:give_rod": {
+        "set_property": {
+          "custom:has_rod": true
+        }
+      },
+      "custom:take_rod": {
+        "remove": {
+          "component_groups": [
+            "fishing_active"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "fishing_idle"
+          ]
+        },
+        "set_property": {
+          "custom:has_rod": false,
+          "custom:is_fishing": false,
+          "custom:is_reeling": false
         }
       },
       "custom:catch_fish": {
         "play_sound": {
           "sound": "random.bowhit"
+        },
+        "set_property": {
+          "custom:is_reeling": true
+        }
+      },
+      "custom:end_reel": {
+        "set_property": {
+          "custom:is_reeling": false
         }
       }
     }
