@@ -254,7 +254,20 @@ function rollFishingLoot(luckLevel) {
 
   const count = Math.floor(Math.random() * (selectedEntry.max - selectedEntry.min + 1)) + selectedEntry.min;
   try {
-    return new ItemStack(selectedEntry.id, count);
+    const item = new ItemStack(selectedEntry.id, count);
+    if (
+      selectedEntry.id === "minecraft:fishing_rod" ||
+      selectedEntry.id === "minecraft:bow" ||
+      selectedEntry.id === "minecraft:leather_boots"
+    ) {
+      try {
+        const dur = item.getComponent("minecraft:durability") || item.getComponent("durability");
+        if (dur && dur.maxDurability) {
+          dur.damage = Math.floor(Math.random() * (dur.maxDurability * 0.7)) + Math.floor(dur.maxDurability * 0.1);
+        }
+      } catch {}
+    }
+    return item;
   } catch {
     return new ItemStack("minecraft:cod", 1);
   }
@@ -564,8 +577,8 @@ function tryOffloadItemsToContainer(npc, targetPos) {
     { dx: -1, dy: 0, dz: 0 },
     { dx: 0, dy: 0, dz: 1 },
     { dx: 0, dy: 0, dz: -1 },
-    { dx: 1, dy: 0, dz: 0 },
-    { dx: -1, dy: 0, dz: 0 },
+    { dx: 1, dy: -1, dz: 0 },
+    { dx: -1, dy: -1, dz: 0 },
     { dx: 0, dy: -1, dz: 1 },
     { dx: 0, dy: -1, dz: -1 },
     { dx: 0, dy: 1, dz: 0 },
@@ -582,7 +595,7 @@ function tryOffloadItemsToContainer(npc, targetPos) {
       if (!block) continue;
 
       const invComp = block.getComponent("inventory");
-      if (invComp && invComp.container) {
+      if (invComp && invComp.container && !containers.includes(invComp.container)) {
         containers.push(invComp.container);
       }
     } catch {}
@@ -591,11 +604,11 @@ function tryOffloadItemsToContainer(npc, targetPos) {
   // If no container found, leave item entities intact on the floor
   if (containers.length === 0) return;
 
-  // Query spawned item entities within a 1.5-block radius of the spawn position
+  // Query spawned item entities within a 2.5-block radius of the spawn position
   try {
     const itemEntities = dimension.getEntities({
       location: targetPos,
-      maxDistance: 1.5,
+      maxDistance: 2.5,
       type: "minecraft:item",
     });
 
@@ -680,7 +693,17 @@ function completeReel(entity, session, luckLevel) {
     dimension.spawnParticle("minecraft:water_splash_particle", bobberPos);
   } catch {}
 
-  // 3. Compute forward spawn position in front of the NPC
+  // Trigger entity reeling animation
+  try {
+    entity.triggerEvent("custom:catch_fish");
+    system.runTimeout(() => {
+      if (entity.isValid()) {
+        entity.triggerEvent("custom:end_reel");
+      }
+    }, 20);
+  } catch {}
+
+  // 3. Compute forward spawn position in front of the NPC (right at feet on shore)
   let dir = { x: 0, z: 1 };
   try {
     const rot = entity.getRotation();
@@ -699,24 +722,49 @@ function completeReel(entity, session, luckLevel) {
   }
 
   const spawnPos = {
-    x: entity.location.x + dir.x * 1.2,
-    y: entity.location.y + 0.2,
-    z: entity.location.z + dir.z * 1.2,
+    x: entity.location.x + dir.x * 0.5,
+    y: entity.location.y + 0.25,
+    z: entity.location.z + dir.z * 0.5,
   };
 
   const spawnX = spawnPos.x.toFixed(2);
   const spawnY = spawnPos.y.toFixed(2);
   const spawnZ = spawnPos.z.toFixed(2);
 
-  // 4. Trigger vanilla fishing loot table complete with random damage and valid enchantments
+  // 4. Trigger authentic vanilla fishing loot table
+  // Bedrock vanilla loot tables: "gameplay/fishing", sub-tables: "treasure", "junk", "fish"
+  let tableToUse = "gameplay/fishing";
+  if (luckLevel > 0) {
+    const treasureChance = 5 + Math.min(luckLevel, 3) * 2;
+    const junkChance = Math.max(2, 10 - Math.min(luckLevel, 3) * 2);
+    const roll = Math.random() * 100;
+    if (roll < treasureChance) {
+      tableToUse = "gameplay/fishing/treasure";
+    } else if (roll < treasureChance + junkChance) {
+      tableToUse = "gameplay/fishing/junk";
+    } else {
+      tableToUse = "gameplay/fishing/fish";
+    }
+  }
+
+  let spawned = false;
   try {
-    dimension.runCommand(`loot spawn ${spawnX} ${spawnY} ${spawnZ} loot "gameplay/fishing/fishing"`);
+    const cmdResult = dimension.runCommand(`loot spawn ${spawnX} ${spawnY} ${spawnZ} loot "${tableToUse}"`);
+    if (cmdResult && (cmdResult.successCount ?? 0) > 0) {
+      spawned = true;
+    }
   } catch (cmdErr) {
-    console.warn(`[AutoFisher] /loot command failed, falling back to direct drop: ${cmdErr}`);
+    console.warn(`[AutoFisher] /loot command failed (cheats disabled or permission issue): ${cmdErr}`);
+  }
+
+  // Guaranteed Vanilla Drop Fallback if /loot produced 0 items or failed
+  if (!spawned) {
     try {
       const fallbackLoot = rollFishingLoot(luckLevel);
       dimension.spawnItem(fallbackLoot, spawnPos);
-    } catch {}
+    } catch (spawnErr) {
+      console.warn(`[AutoFisher] Direct fallback item spawn failed: ${spawnErr}`);
+    }
   }
 
   // 5. Integration with Chest Offloading (if adjacent chest/barrel/hopper is present)
